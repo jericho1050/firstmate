@@ -898,13 +898,13 @@ fm_pr_poll_retirement_recover_one() {
   if [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then
     return 0
   fi
-  if ! fm_pr_poll_retirement_state_valid "$state" "$id"; then
-    fm_pr_poll_retirement_discard_obsolete "$state" "$id" "$template" && return 0
-    return 1
-  fi
   if [ "$preserve_worker_receipt" = 1 ] \
     && [ -f "$state/$id.meta" ] && [ ! -L "$state/$id.meta" ]; then
     return 0
+  fi
+  if ! fm_pr_poll_retirement_state_valid "$state" "$id"; then
+    fm_pr_poll_retirement_discard_obsolete "$state" "$id" "$template" && return 0
+    return 1
   fi
   state_device=$(fm_pr_file_device "$state") || return 1
   check="$state/$id.check.sh"

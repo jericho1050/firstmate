@@ -134,6 +134,13 @@ publish_event() {
     return 1
   fi
 
+  if [ "$event_type" = local-merged ] \
+    && ! fm_retirement_local_merge_confirmed "$STATE" "$meta" "$id"; then
+    echo "REFUSED: local-only task $id is not confirmed merged into its default branch; preserving everything." >&2
+    retirement_pre_event_notice "$id" "local-only work is not confirmed merged into the default branch" || true
+    return 1
+  fi
+
   case "$event_type" in
     pr-merged)
       receipt="$STATE/$id.pr-poll-retirement"
@@ -202,9 +209,14 @@ open_decisions() {
 }
 
 retirement_pre_event_notice() {
-  local id=$1 reason=$2 key payload
+  local id=$1 reason=$2 key payload marker
   key="worker-retirement:$id"
   payload="worker retirement needs attention for $id: $reason"
+  marker=$(fm_retirement_notice_marker_path "$STATE" "$id")
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    fm_retirement_notice_marker_valid "$STATE" "$id" "$marker" || return 1
+    return 0
+  fi
   if fm_wake_queued_keys check 2>/dev/null | grep -Fx -- "$key" >/dev/null 2>&1; then
     return 0
   fi
@@ -213,9 +225,14 @@ retirement_pre_event_notice() {
 }
 
 retirement_notice() {
-  local event_file=$1 id=$2 reason=$3 notice key payload
+  local event_file=$1 id=$2 reason=$3 notice key payload marker
   notice=$(fm_retirement_event_field "$event_file" notice_emitted)
   [ "$notice" = 1 ] && return 0
+  marker=$(fm_retirement_notice_marker_path "$STATE" "$id")
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    fm_retirement_notice_marker_valid "$STATE" "$id" "$marker" || return 1
+    return 0
+  fi
   key="worker-retirement:$id"
   payload="worker retirement needs attention for $id: $reason"
   if fm_wake_queued_keys check 2>/dev/null | grep -Fx -- "$key" >/dev/null 2>&1; then
@@ -373,6 +390,29 @@ recover_all() {
   return "$rc"
 }
 
+recover_local_landed() {
+  local receipt id meta kind mode rc=0
+  for receipt in "$STATE"/*.local-merge; do
+    [ -e "$receipt" ] || [ -L "$receipt" ] || continue
+    id=$(basename "$receipt" .local-merge)
+    valid_id "$id" || continue
+    meta="$STATE/$id.meta"
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    kind=$(meta_kind "$meta")
+    mode=$(meta_mode "$meta")
+    [ "$kind" = ship ] && [ "$mode" = local-only ] || continue
+    fm_retirement_local_merge_confirmed "$STATE" "$meta" "$id" || continue
+    if ! handle_one local-merged "$id"; then
+      rc=1
+    fi
+    if [ "$RETIREMENT_LOCK_HELD" = 1 ]; then
+      fm_lock_release "$RETIREMENT_LOCK" || rc=1
+      RETIREMENT_LOCK_HELD=0
+    fi
+  done
+  return "$rc"
+}
+
 handle_existing() {
   local event_file=$1 id=$2
   valid_id "$id" || return 1
@@ -393,7 +433,10 @@ case "$command" in
   recover)
     [ "$#" -eq 1 ] || { usage >&2; exit 2; }
     [ -d "$STATE" ] && [ ! -L "$STATE" ] || exit 0
-    recover_all
+    recovery_rc=0
+    recover_all || recovery_rc=$?
+    recover_local_landed || recovery_rc=$?
+    exit "$recovery_rc"
     ;;
   -h|--help)
     usage

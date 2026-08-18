@@ -21,6 +21,168 @@ fm_retirement_event_path() {
   printf '%s/%s.retirement\n' "$state" "$id"
 }
 
+fm_retirement_notice_marker_path() {
+  local state=$1 id=$2
+  printf '%s/.worker-retirement-notice-%s\n' "$state" "$id"
+}
+
+fm_retirement_notice_marker_valid() {
+  local state=$1 id=$2 path=$3 value extra
+  case "$id" in
+    ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  path=${path:-$(fm_retirement_notice_marker_path "$state" "$id")}
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  exec 7< "$path" || return 1
+  IFS= read -r value <&7 || { exec 7<&-; return 1; }
+  if IFS= read -r extra <&7; then
+    exec 7<&-
+    return 1
+  fi
+  exec 7<&-
+  [ "$value" = fm-worker-retirement-notice-v1 ]
+}
+
+fm_retirement_notice_marker_mark() {
+  local state=$1 id=$2 path tmp
+  case "$id" in
+    ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  path=$(fm_retirement_notice_marker_path "$state" "$id")
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    fm_retirement_notice_marker_valid "$state" "$id" "$path"
+    return $?
+  fi
+  tmp=$(mktemp "$state/.worker-retirement-notice.XXXXXX") || return 1
+  if ! printf '%s\n' fm-worker-retirement-notice-v1 > "$tmp" \
+    || ! chmod 0600 "$tmp" \
+    || ! mv -f -- "$tmp" "$path"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  fm_retirement_notice_marker_valid "$state" "$id" "$path"
+}
+
+fm_retirement_notice_ack_key() {
+  local state=$1 key=$2 id
+  case "$key" in
+    worker-retirement:*)
+      id=${key#worker-retirement:}
+      case "$id" in
+        ''|.*|*[!A-Za-z0-9._-]*) return 1 ;;
+      esac
+      if [ -e "$state/$id.meta" ] || [ -L "$state/$id.meta" ] \
+        || [ -e "$state/$id.retirement" ] || [ -L "$state/$id.retirement" ]; then
+        fm_retirement_notice_marker_mark "$state" "$id"
+      fi
+      ;;
+  esac
+}
+
+fm_retirement_local_merge_receipt_path() {
+  local state=$1 id=$2
+  printf '%s/%s.local-merge\n' "$state" "$id"
+}
+
+fm_retirement_local_merge_receipt_parse() {
+  local file=$1 schema task branch default branch_tip default_before extra
+  FM_RETIREMENT_LOCAL_MERGE_TASK=
+  FM_RETIREMENT_LOCAL_MERGE_BRANCH=
+  FM_RETIREMENT_LOCAL_MERGE_DEFAULT=
+  FM_RETIREMENT_LOCAL_MERGE_BRANCH_TIP=
+  FM_RETIREMENT_LOCAL_MERGE_DEFAULT_BEFORE=
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  exec 6< "$file" || return 1
+  IFS= read -r schema <&6 || { exec 6<&-; return 1; }
+  IFS= read -r task <&6 || { exec 6<&-; return 1; }
+  IFS= read -r branch <&6 || { exec 6<&-; return 1; }
+  IFS= read -r default <&6 || { exec 6<&-; return 1; }
+  IFS= read -r branch_tip <&6 || { exec 6<&-; return 1; }
+  IFS= read -r default_before <&6 || { exec 6<&-; return 1; }
+  if IFS= read -r extra <&6; then
+    exec 6<&-
+    return 1
+  fi
+  exec 6<&-
+  case "$schema" in schema=*) schema=${schema#schema=} ;; *) return 1 ;; esac
+  case "$task" in task_id=*) task=${task#task_id=} ;; *) return 1 ;; esac
+  case "$branch" in branch=*) branch=${branch#branch=} ;; *) return 1 ;; esac
+  case "$default" in default=*) default=${default#default=} ;; *) return 1 ;; esac
+  case "$branch_tip" in branch_tip=*) branch_tip=${branch_tip#branch_tip=} ;; *) return 1 ;; esac
+  case "$default_before" in default_before=*) default_before=${default_before#default_before=} ;; *) return 1 ;; esac
+  [ "$schema" = fm-local-merge-v1 ] || return 1
+  case "$task" in ''|.*|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  git check-ref-format --branch "$branch" >/dev/null 2>&1 || return 1
+  [[ "$branch_tip" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+  [[ "$default_before" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+  [ "$branch_tip" != "$default_before" ] || return 1
+  git check-ref-format --branch "$default" >/dev/null 2>&1 || return 1
+  FM_RETIREMENT_LOCAL_MERGE_TASK=$task
+  FM_RETIREMENT_LOCAL_MERGE_BRANCH=$branch
+  FM_RETIREMENT_LOCAL_MERGE_DEFAULT=$default
+  FM_RETIREMENT_LOCAL_MERGE_BRANCH_TIP=$branch_tip
+  FM_RETIREMENT_LOCAL_MERGE_DEFAULT_BEFORE=$default_before
+}
+
+fm_retirement_local_merge_receipt_publish() {
+  local state=$1 id=$2 branch=$3 default=$4 branch_tip=$5 default_before=$6
+  local path tmp
+  case "$id" in ''|.*|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  [ "$branch" = "fm/$id" ] || return 1
+  [ -d "$state" ] && [ ! -L "$state" ] || return 1
+  [[ "$branch_tip" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+  [[ "$default_before" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+  [ "$branch_tip" != "$default_before" ] || return 1
+  path=$(fm_retirement_local_merge_receipt_path "$state" "$id")
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    fm_retirement_local_merge_receipt_parse "$path" || return 1
+    [ "$FM_RETIREMENT_LOCAL_MERGE_TASK" = "$id" ] \
+      && [ "$FM_RETIREMENT_LOCAL_MERGE_BRANCH" = "$branch" ] \
+      && [ "$FM_RETIREMENT_LOCAL_MERGE_DEFAULT" = "$default" ] \
+      && [ "$FM_RETIREMENT_LOCAL_MERGE_BRANCH_TIP" = "$branch_tip" ] \
+      && [ "$FM_RETIREMENT_LOCAL_MERGE_DEFAULT_BEFORE" = "$default_before" ]
+    return $?
+  fi
+  tmp=$(mktemp "$state/.local-merge.XXXXXX") || return 1
+  if ! {
+    printf 'schema=fm-local-merge-v1\n'
+    printf 'task_id=%s\n' "$id"
+    printf 'branch=%s\n' "$branch"
+    printf 'default=%s\n' "$default"
+    printf 'branch_tip=%s\n' "$branch_tip"
+    printf 'default_before=%s\n' "$default_before"
+  } > "$tmp" \
+    || ! chmod 0600 "$tmp" \
+    || ! mv -f -- "$tmp" "$path"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  fm_retirement_local_merge_receipt_parse "$path"
+}
+
+fm_retirement_local_merge_confirmed() {
+  local state=$1 meta=$2 id=$3 project worktree branch default branch_tip default_before current_branch_tip current_default_tip
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  project=$(fm_meta_get "$meta" project)
+  worktree=$(fm_meta_get "$meta" worktree)
+  [ -d "$project" ] && [ ! -L "$project" ] || return 1
+  [ -d "$worktree" ] && [ ! -L "$worktree" ] || return 1
+  fm_retirement_local_merge_receipt_parse "$(fm_retirement_local_merge_receipt_path "$state" "$id")" || return 1
+  [ "$FM_RETIREMENT_LOCAL_MERGE_TASK" = "$id" ] || return 1
+  branch="fm/$id"
+  [ "$FM_RETIREMENT_LOCAL_MERGE_BRANCH" = "$branch" ] || return 1
+  default=$FM_RETIREMENT_LOCAL_MERGE_DEFAULT
+  branch_tip=$FM_RETIREMENT_LOCAL_MERGE_BRANCH_TIP
+  default_before=$FM_RETIREMENT_LOCAL_MERGE_DEFAULT_BEFORE
+  [ "$(git -C "$worktree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)" = "$branch" ] || return 1
+  current_branch_tip=$(git -C "$project" rev-parse --verify --quiet "refs/heads/$branch^{commit}") || return 1
+  [ "$current_branch_tip" = "$branch_tip" ] || return 1
+  current_default_tip=$(git -C "$project" rev-parse --verify --quiet "refs/heads/$default^{commit}") || return 1
+  git -C "$project" merge-base --is-ancestor "$default_before" "$branch_tip" || return 1
+  git -C "$project" merge-base --is-ancestor "$branch_tip" "$current_default_tip"
+}
+
 fm_retirement_event_field() {
   local file=$1 key=$2
   grep "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true

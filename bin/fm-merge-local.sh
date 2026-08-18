@@ -16,6 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# shellcheck source=bin/fm-backend.sh
+. "$FM_ROOT/bin/fm-backend.sh"
+# shellcheck source=bin/fm-worker-retirement-lib.sh
+. "$FM_ROOT/bin/fm-worker-retirement-lib.sh"
 "$FM_ROOT/bin/fm-guard.sh" || true
 ID=${1:?usage: fm-merge-local.sh <task-id>}
 META="$STATE/$ID.meta"
@@ -62,13 +66,14 @@ if ! git -C "$PROJ" merge-base --is-ancestor "$DEFAULT" "$BRANCH"; then
   exit 1
 fi
 
-before=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
+before=$(git -C "$PROJ" rev-parse "$DEFAULT")
+branch_tip=$(git -C "$PROJ" rev-parse "$BRANCH")
+[ "$before" != "$branch_tip" ] || { echo "error: $BRANCH has no local commits to merge into $DEFAULT" >&2; exit 1; }
+fm_retirement_local_merge_receipt_publish "$STATE" "$ID" "$BRANCH" "$DEFAULT" "$branch_tip" "$before" \
+  || { echo "error: could not record the local merge receipt for $ID" >&2; exit 1; }
 git -C "$PROJ" merge --ff-only "$BRANCH" >/dev/null
 after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
-# The fast-forward above is the confirmed local-landing event. The retirement
-# hook records it durably before delegating cleanup, and leaves that event for
-# recovery when cleanup is refused or interrupted.
 if ! "$SCRIPT_DIR/fm-worker-retirement.sh" local-merged "$ID"; then
   echo "warning: local merge landed, but worker retirement remains pending for $ID; retry the durable retirement event after its refusal clears" >&2
   exit 1

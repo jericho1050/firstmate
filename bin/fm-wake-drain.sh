@@ -14,6 +14,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-line-cap-lib.sh
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
+# shellcheck source=bin/fm-worker-retirement-lib.sh
+. "$SCRIPT_DIR/fm-worker-retirement-lib.sh"
 
 DRAIN_TMP=
 DRAIN_LOCK_HELD=false
@@ -231,6 +233,16 @@ if [ -n "$ACK_THROUGH" ]; then
   DRAIN_LOCK_HELD=true
   DRAIN_TMP=$(mktemp "$STATE/.wake-queue.ack.XXXXXX") || exit 1
   chmod 0600 "$DRAIN_TMP" || exit 1
+  while IFS=$(printf '\t') read -r epoch seq kind key payload; do
+    : "$epoch" "$payload"
+    [ "$kind" = check ] || continue
+    case "$seq" in ''|*[!0-9]*) continue ;; esac
+    [ "$seq" -le "$ACK_THROUGH" ] || continue
+    fm_retirement_notice_ack_key "$STATE" "$key" || {
+      echo "wake drain: worker-retirement notice acknowledgement could not be recorded safely" >&2
+      exit 1
+    }
+  done < "$FM_WAKE_QUEUE"
   awk -F '\t' -v cutoff="$ACK_THROUGH" '
     NF < 5 || $2 !~ /^[0-9]+$/ || $2 > cutoff { print }
   ' "$FM_WAKE_QUEUE" > "$DRAIN_TMP" || exit 1

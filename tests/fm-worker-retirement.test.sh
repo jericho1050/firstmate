@@ -9,6 +9,10 @@ fm_git_identity fmtest fmtest@example.invalid
 HOOK="$ROOT/bin/fm-worker-retirement.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-pr-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-backend.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-worker-retirement-lib.sh"
 TMP_ROOT=$(fm_test_tmproot fm-worker-retirement)
 
 make_case() { # <name> <id>
@@ -128,11 +132,21 @@ run_hook() { # <event> [<id>]
   return "$rc"
 }
 
+arm_local_merge_receipt() { # <id>
+  local id=$1 default before branch_tip
+  default=$(git -C "$CASE/project" symbolic-ref --quiet --short HEAD) || fail "local fixture has no default branch"
+  before=$(git -C "$CASE/project" rev-parse "$default") || fail "local fixture has no default commit"
+  branch_tip=$(git -C "$CASE/project" rev-parse "fm/$id") || fail "local fixture has no task commit"
+  fm_retirement_local_merge_receipt_publish "$CASE/home/state" "$id" "fm/$id" \
+    "$default" "$branch_tip" "$before" || fail "local fixture could not publish merge receipt"
+}
+
 land_task() { # <id>
   local id=$1
   printf 'change\n' > "$CASE/wt/change"
   git -C "$CASE/wt" add change
   git -C "$CASE/wt" commit -qm change
+  arm_local_merge_receipt "$id"
   git -C "$CASE/project" merge --ff-only "fm/$id" >/dev/null
 }
 
@@ -145,6 +159,19 @@ commit_unlanded_task() {
 assert_one_retirement_wake() {
   [ "$(grep -c 'worker-retirement:' "$CASE/home/state/.wake-queue" 2>/dev/null || true)" = 1 ] \
     || fail "retirement refusal did not emit exactly one actionable wake"
+}
+
+ack_retirement_wake() {
+  local output sequence generation
+  output=$(FM_HOME="$CASE/home" FM_STATE_OVERRIDE="$CASE/home/state" \
+    FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-wake-drain.sh" 2>&1) || fail "retirement wake could not be drained"
+  sequence=$(printf '%s\n' "$output" | sed -n 's/.*--ack-through \([0-9][0-9]*\) --recovery-generation .*/\1/p' | tail -1)
+  generation=$(printf '%s\n' "$output" | sed -n 's/.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\).*/\1/p' | tail -1)
+  [ -n "$sequence" ] && [ -n "$generation" ] || fail "retirement wake drain omitted acknowledgement"
+  FM_HOME="$CASE/home" FM_STATE_OVERRIDE="$CASE/home/state" \
+    FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-wake-drain.sh" --ack-through "$sequence" \
+    --recovery-generation "$generation" >/dev/null 2>&1 \
+    || fail "retirement wake could not be acknowledged"
 }
 
 test_done_before_merge_preserves() {
@@ -166,6 +193,16 @@ test_merged_clean_success() {
   [ ! -e "$CASE/home/state/merged1.retirement" ] || fail "completed retirement event survived cleanup"
   [ "$(wc -l < "$CASE/treehouse.log" | tr -d ' ')" = 1 ] || fail "merged worker was not pruned exactly once"
   pass "confirmed clean landing retires worker"
+}
+
+test_local_landing_recovery() {
+  make_case local-recovery localrecover1
+  write_ship_meta localrecover1 local-only
+  land_task localrecover1
+  run_hook recover || fail "local landing recovery did not retire worker"
+  [ ! -e "$CASE/home/state/localrecover1.meta" ] || fail "recovered local landing left metadata"
+  [ "$(wc -l < "$CASE/treehouse.log" | tr -d ' ')" = 1 ] || fail "recovered local landing did not prune once"
+  pass "local landing recovery re-derives interrupted merge"
 }
 
 test_validated_pr_merge_success() {
@@ -212,30 +249,36 @@ test_pr_refusal_preserves_receipt() {
   [ ! -e "$CASE/home/state/$id.retirement" ] || fail "endpoint refusal created an unbound event"
   [ ! -s "$CASE/treehouse.log" ] || fail "endpoint refusal reached treehouse cleanup"
   assert_one_retirement_wake
+  ack_retirement_wake
+  [ -e "$CASE/home/state/.worker-retirement-notice-$id" ] \
+    || fail "acknowledged refusal did not leave a durable notice marker"
   run_hook pr-merged "$id" && fail "repeated endpoint refusal unexpectedly succeeded"
-  assert_one_retirement_wake
+  [ ! -s "$CASE/home/state/.wake-queue" ] \
+    || fail "acknowledged refusal emitted a retry wake storm"
   pass "endpoint refusal preserves its receipt and one retry wake"
 }
 
 test_dirty_unlanded_refusal() {
   make_case dirty dirty1
   write_ship_meta dirty1 local-only
+  land_task dirty1
   printf 'dirty\n' > "$CASE/wt/uncommitted"
   run_hook local-merged dirty1 && fail "dirty worker retirement unexpectedly succeeded"
   [ -e "$CASE/home/state/dirty1.meta" ] || fail "dirty refusal removed metadata"
   [ -e "$CASE/home/state/dirty1.retirement" ] || fail "dirty refusal lost durable event"
   [ ! -s "$CASE/treehouse.log" ] || fail "dirty refusal reached treehouse cleanup"
   assert_one_retirement_wake
-  pass "dirty or unlanded work refuses and remains retryable"
+  pass "dirty work refuses and remains retryable"
 }
 
 test_clean_unlanded_refusal() {
   make_case clean-unlanded clean1
   write_ship_meta clean1 local-only
   commit_unlanded_task
+  arm_local_merge_receipt clean1
   run_hook local-merged clean1 && fail "clean unlanded worker retirement unexpectedly succeeded"
   [ -e "$CASE/home/state/clean1.meta" ] || fail "clean unlanded refusal removed metadata"
-  [ -e "$CASE/home/state/clean1.retirement" ] || fail "clean unlanded refusal lost durable event"
+  [ ! -e "$CASE/home/state/clean1.retirement" ] || fail "clean unlanded refusal created retirement authority"
   [ ! -s "$CASE/treehouse.log" ] || fail "clean unlanded refusal reached treehouse cleanup"
   assert_one_retirement_wake
   pass "clean unlanded work refuses and remains retryable"
@@ -284,7 +327,7 @@ test_recycled_endpoint_refusal() {
 test_missing_spawn_generation_refusal() {
   make_case missing-spawn missing1
   write_ship_meta missing1 local-only
-  commit_unlanded_task
+  land_task missing1
   sed -i.bak '/spawn_gen=/d' "$CASE/home/state/missing1.meta"
   run_hook local-merged missing1 && fail "missing spawn incarnation unexpectedly authorized retirement"
   [ -e "$CASE/home/state/missing1.meta" ] || fail "missing spawn refusal removed metadata"
@@ -348,6 +391,7 @@ test_backend_close_boundary_is_delegated() {
 
 test_done_before_merge_preserves
 test_merged_clean_success
+test_local_landing_recovery
 test_validated_pr_merge_success
 test_pr_refusal_preserves_receipt
 test_dirty_unlanded_refusal

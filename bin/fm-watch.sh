@@ -813,8 +813,13 @@ done
 # A worker-retirement event is durable before this recovery call can delegate
 # cleanup, so a watcher restart retries an interrupted retirement without
 # treating a prior done line or an idle endpoint as landing evidence.
-# Do not launch the hook on homes with no event; ordinary supervision must keep
-# its existing timing and side-effect profile.
+retirement_recovery_out=$("$SCRIPT_DIR/fm-worker-retirement.sh" recover 2>&1) || {
+  [ -z "$retirement_recovery_out" ] || triage_log "worker-retirement recovery deferred: $retirement_recovery_out"
+}
+if printf '%s\n' "$retirement_recovery_out" | grep -Fq 'actionable:'; then
+  wake "check: worker-retirement recovery"
+fi
+
 retirement_events_pending=0
 for retirement_event in "$STATE"/*.retirement; do
   if [ -e "$retirement_event" ] || [ -L "$retirement_event" ]; then
@@ -822,16 +827,6 @@ for retirement_event in "$STATE"/*.retirement; do
     break
   fi
 done
-if [ "$retirement_events_pending" -eq 1 ]; then
-  retirement_recovery_out=$("$SCRIPT_DIR/fm-worker-retirement.sh" recover 2>&1) || {
-    [ -z "$retirement_recovery_out" ] || triage_log "worker-retirement recovery deferred: $retirement_recovery_out"
-  }
-  if printf '%s\n' "$retirement_recovery_out" | grep -Fq 'actionable:'; then
-    wake "check: worker-retirement recovery"
-  fi
-else
-  retirement_recovery_out=
-fi
 
 # A merged poll may have queued its terminal wake and then lost the process
 # between receipt publication and fixed-path removal.
@@ -978,14 +973,14 @@ while :; do
             if [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ]; then
               if "$SCRIPT_DIR/fm-worker-retirement.sh" pr-merged "$id" >/dev/null 2>&1; then
                 if [ ! -e "$STATE/$id.retirement" ] && [ ! -L "$STATE/$id.retirement" ]; then
-                  fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" \
+                  fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" 1 \
                     || triage_log "merged PR poll retirement remains recoverable for $id"
                 fi
               else
                 triage_log "merged PR poll retirement remains preserved for $id"
               fi
             elif [ ! -e "$STATE/$id.retirement" ] && [ ! -L "$STATE/$id.retirement" ]; then
-              fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" \
+              fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" 1 \
                 || triage_log "merged PR poll retirement remains recoverable for $id"
             fi
           else
