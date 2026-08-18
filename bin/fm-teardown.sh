@@ -148,6 +148,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-worker-retirement-lib.sh
+. "$SCRIPT_DIR/fm-worker-retirement-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-lock-lib.sh
@@ -221,6 +223,13 @@ META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
 [ -f "$META" ] || { echo "error: no meta for task $ID at $META" >&2; exit 1; }
+if [ -n "${FM_WORKER_RETIREMENT_EVENT:-}" ]; then
+  expected_event=$(fm_retirement_event_path "$STATE" "$ID")
+  [ "$FM_WORKER_RETIREMENT_EVENT" = "$expected_event" ] \
+    || { echo "REFUSED: retirement event path is not bound to task $ID; preserving task state." >&2; exit 1; }
+  fm_retirement_event_matches_meta "$FM_WORKER_RETIREMENT_EVENT" "$META" "$ID" \
+    || { echo "REFUSED: retirement event identity does not match task $ID; preserving task state." >&2; exit 1; }
+fi
 
 REMOTE_HANDOFF_DIR_PRESENT=0
 REMOTE_HANDOFF_DIR_REAL=
@@ -2372,6 +2381,19 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
     else
       exit 1
     fi
+  fi
+fi
+
+# The retirement hook rechecks current pipeline custody after teardown owns the
+# lifecycle lock, closing the race in which a worker could be relaunched after
+# the hook's read but before destructive cleanup. Ordinary manual teardown keeps
+# its historical parked-run handling below.
+if [ -n "${FM_WORKER_RETIREMENT_EVENT:-}" ] && [ "$KIND" != secondmate ]; then
+  retirement_state_rc=0
+  retirement_state=$(fm_retirement_pipeline_state "$ID") || retirement_state_rc=$?
+  if [ "$retirement_state_rc" -ne 0 ] || { [ "$retirement_state" != "done" ] && [ "$retirement_state" != "failed" ]; }; then
+    echo "REFUSED: worker-retirement pipeline custody is not terminal for $ID; preserving task state." >&2
+    exit 1
   fi
 fi
 

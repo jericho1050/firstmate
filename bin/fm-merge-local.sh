@@ -66,3 +66,10 @@ before=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 git -C "$PROJ" merge --ff-only "$BRANCH" >/dev/null
 after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 echo "merged $BRANCH into local $DEFAULT ($before -> $after) in $PROJ"
+# The fast-forward above is the confirmed local-landing event. The retirement
+# hook records it durably before delegating cleanup, and leaves that event for
+# recovery when cleanup is refused or interrupted.
+if ! "$SCRIPT_DIR/fm-worker-retirement.sh" local-merged "$ID"; then
+  echo "warning: local merge landed, but worker retirement remains pending for $ID; retry the durable retirement event after its refusal clears" >&2
+  exit 1
+fi

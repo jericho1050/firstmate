@@ -790,10 +790,35 @@ printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
 
+# A worker-retirement event is durable before this recovery call can delegate
+# cleanup, so a watcher restart retries an interrupted retirement without
+# treating a prior done line or an idle endpoint as landing evidence.
+# Do not launch the hook on homes with no event; ordinary supervision must keep
+# its existing timing and side-effect profile.
+retirement_events_pending=0
+for retirement_event in "$STATE"/*.retirement; do
+  if [ -e "$retirement_event" ] || [ -L "$retirement_event" ]; then
+    retirement_events_pending=1
+    break
+  fi
+done
+if [ "$retirement_events_pending" -eq 1 ]; then
+  retirement_recovery_out=$("$SCRIPT_DIR/fm-worker-retirement.sh" recover 2>&1) || {
+    [ -z "$retirement_recovery_out" ] || triage_log "worker-retirement recovery deferred: $retirement_recovery_out"
+  }
+  if printf '%s\n' "$retirement_recovery_out" | grep -Fq 'actionable:'; then
+    wake "check: worker-retirement recovery"
+  fi
+else
+  retirement_recovery_out=
+fi
+
 # A merged poll may have queued its terminal wake and then lost the process
 # between receipt publication and fixed-path removal.
-# Finish only identity-bound retirement receipts before any check can run.
-if ! fm_pr_poll_retirement_recover_all "$STATE" "$SCRIPT_DIR/fm-pr-poll.sh"; then
+# Preserve its validated receipt while a worker-retirement event is unresolved;
+# fm-teardown owns receipt removal after the landing checks and endpoint close.
+if [ "$retirement_events_pending" -eq 0 ] \
+  && ! fm_pr_poll_retirement_recover_all "$STATE" "$SCRIPT_DIR/fm-pr-poll.sh"; then
   reason="check: rejected unauthenticated PR poll retirement receipts:$FM_PR_POLL_RETIREMENT_REJECTED"
   fm_wake_append check pr-poll-retirement "$reason" || exit 1
   touch "$STATE/.last-check"
@@ -924,8 +949,17 @@ while :; do
         fm_wake_append check "$c" "$reason" || exit 1
         if [ "$is_pr_poll" -eq 1 ] && [ "$out" = merged ]; then
           if fm_pr_poll_retirement_publish "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" "$out"; then
-            fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" \
-              || triage_log "merged PR poll retirement remains recoverable for $id"
+            # The authenticated merged result is the only PR-shipping event
+            # that may authorize full worker pruning. Invalid legacy fixtures
+            # or ambiguous metadata remain poll-only and are preserved.
+            if [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ] \
+              && [ -n "$(fm_meta_get "$STATE/$id.meta" spawn_gen)" ]; then
+              "$SCRIPT_DIR/fm-worker-retirement.sh" pr-merged "$id" >/dev/null 2>&1 || true
+            fi
+            if [ ! -e "$STATE/$id.retirement" ] && [ ! -L "$STATE/$id.retirement" ]; then
+              fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" \
+                || triage_log "merged PR poll retirement remains recoverable for $id"
+            fi
           else
             triage_log "merged PR poll retirement deferred because its canonical snapshot changed for $id"
           fi
@@ -956,6 +990,21 @@ while :; do
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue
       case " $files " in *" $f "*) ;; *) files="$files $f" ;; esac
+    done <<EOF
+$pending
+EOF
+    # A scout's status text is only a wake hint. The hook authorizes retirement
+    # only after it independently validates the durable report and decision
+    # completion gate, so a free-text done line cannot prune a scout.
+    while IFS=$(printf '\t') read -r _sf _sig f; do
+      [ -n "$f" ] || continue
+      scout_id=$(basename "$f" .status)
+      scout_meta="$STATE/$scout_id.meta"
+      if [ -f "$scout_meta" ] && [ ! -L "$scout_meta" ] \
+        && [ "$(fm_meta_get "$scout_meta" kind)" = scout ] \
+        && [ -n "$(fm_meta_get "$scout_meta" spawn_gen)" ]; then
+        "$SCRIPT_DIR/fm-worker-retirement.sh" scout-complete "$scout_id" >/dev/null 2>&1 || true
+      fi
     done <<EOF
 $pending
 EOF

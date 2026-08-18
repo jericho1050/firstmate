@@ -183,6 +183,16 @@ The helper's header owns the exact signal detection, relocated-home limitation, 
 Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); scout tasks leave standalone investigation reports at `data/<id>/report.md` and never push.
 The intake and authority contract in `AGENTS.md` owns when separate scout research is warranted.
 
+## Worker retirement
+
+`bin/fm-worker-retirement.sh` is the event-driven retirement owner for ordinary finished workers, while `bin/fm-teardown.sh` remains the sole destructive cleanup owner.
+Only its durable validated PR-merge, confirmed local-merge, or scout-report-and-decision event can authorize full pruning, and every event is bound to the task's spawn incarnation and exact endpoint.
+Idle state, Stop hooks, and free-text done reports never authorize pruning.
+Persistent secondmates are excluded from this hook.
+Retirement events remain durable across refusal or interruption and are retried at watcher startup, with one deduplicated actionable wake while a refusal remains unresolved.
+The hook never uses `--force` and delegates dirty-worktree, landed-work, public-reply, Herdr-close, and other destructive checks to `fm-teardown.sh`.
+The runtime reload boundary is the first watcher or session-start cycle after this code lands, so existing live tasks are not retroactively pruned.
+
 ## Dispatch profiles
 
 Crewmate and scout dispatch can stay on the static crewmate harness resolved by `config/crew-harness`, or it can use local dispatch profiles in `config/crew-dispatch.json`.
