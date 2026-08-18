@@ -790,6 +790,21 @@ printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/
 
 [ -e "$STATE/.last-heartbeat" ] || touch "$STATE/.last-heartbeat"
 
+# A crash after publishing the validated merged-poll receipt but before the
+# hook writes its worker event must not lose the landing signal. Give every
+# receipt one chance to become an identity-bound worker event before the older
+# poll-artifact recovery can retire that receipt.
+for retirement_receipt in "$STATE"/*.pr-poll-retirement; do
+  [ -e "$retirement_receipt" ] || [ -L "$retirement_receipt" ] || continue
+  retirement_id=$(basename "$retirement_receipt" .pr-poll-retirement)
+  if fm_pr_task_id_valid "$retirement_id" \
+    && [ -f "$STATE/$retirement_id.meta" ] \
+    && [ ! -L "$STATE/$retirement_id.meta" ] \
+    && [ -n "$(fm_meta_get "$STATE/$retirement_id.meta" spawn_gen)" ]; then
+    "$SCRIPT_DIR/fm-worker-retirement.sh" pr-merged "$retirement_id" >/dev/null 2>&1 || true
+  fi
+done
+
 # A worker-retirement event is durable before this recovery call can delegate
 # cleanup, so a watcher restart retries an interrupted retirement without
 # treating a prior done line or an idle endpoint as landing evidence.
