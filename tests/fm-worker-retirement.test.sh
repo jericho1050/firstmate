@@ -221,6 +221,10 @@ test_validated_pr_merge_success() {
     || fail "PR fixture poll snapshot did not capture"
   fm_pr_poll_retirement_publish "$CASE/home/state" "$id" "$ROOT/bin/fm-pr-poll.sh" merged \
     || fail "PR fixture merged event did not publish"
+  fm_pr_poll_retirement_parse "$CASE/home/state/$id.pr-poll-retirement" \
+    || fail "PR fixture receipt did not parse"
+  [ "$FM_PR_RETIRE_SPAWN_GEN" = one ] || fail "PR receipt lost its spawn incarnation"
+  [ -n "$FM_PR_RETIRE_ENDPOINT" ] || fail "PR receipt lost its endpoint identity"
   run_hook pr-merged "$id" || fail "validated PR merge did not retire worker: $(cat "$CASE/hook.err")"
   [ ! -e "$CASE/home/state/$id.meta" ] || fail "validated PR merge left metadata"
   [ ! -e "$CASE/home/state/$id.pr-poll-retirement" ] || fail "validated PR merge left its proof receipt"
@@ -373,6 +377,64 @@ test_restart_recovery() {
   pass "interrupted retirement recovers after restart"
 }
 
+test_handoff_recovery_without_live_worker() {
+  make_case handoff handoff1
+  write_ship_meta handoff1 local-only
+  land_task handoff1
+  export FM_TREEHOUSE_FAIL_ONCE="$CASE/return-fails-once"
+  run_hook local-merged handoff1 && fail "handoff interruption unexpectedly reported success"
+  unset FM_TREEHOUSE_FAIL_ONCE
+  [ "$(fm_retirement_event_field "$CASE/home/state/handoff1.retirement" teardown_handoff)" = 1 ] \
+    || fail "teardown did not persist its handoff boundary"
+  rm -rf "$CASE/wt"
+  printf 'unknown\n' > "$CASE/crew-state"
+  run_hook recover || fail "handoff recovery required a live terminal worker"
+  [ ! -e "$CASE/home/state/handoff1.meta" ] || fail "handoff recovery left metadata"
+  pass "teardown handoff recovers after endpoint and worktree progress"
+}
+
+test_local_proof_rechecks_current_ancestry() {
+  make_case local-proof-recheck localproof1
+  write_ship_meta localproof1 local-only
+  land_task localproof1
+  printf 'working\n' > "$CASE/crew-state"
+  run_hook local-merged localproof1 && fail "nonterminal local proof unexpectedly retired worker"
+  printf 'later change\n' > "$CASE/wt/later"
+  git -C "$CASE/wt" add later
+  git -C "$CASE/wt" commit -qm later
+  printf 'done\n' > "$CASE/crew-state"
+  run_hook recover && fail "later branch change bypassed local ancestry proof"
+  [ -e "$CASE/home/state/localproof1.retirement" ] || fail "local proof refusal lost the durable event"
+  [ -e "$CASE/home/state/localproof1.meta" ] || fail "local proof refusal removed metadata"
+  [ ! -s "$CASE/treehouse.log" ] || fail "local proof refusal reached cleanup"
+  pass "local retirement rechecks current ancestry before teardown"
+}
+
+test_local_receipt_rejects_relaunched_worker() {
+  make_case local-relaunch localrelaunch1
+  write_ship_meta localrelaunch1 local-only
+  land_task localrelaunch1
+  sed -i.bak 's/spawn_gen=one/spawn_gen=two/' "$CASE/home/state/localrelaunch1.meta"
+  run_hook recover && fail "relaunch changed the local receipt authority"
+  [ -e "$CASE/home/state/localrelaunch1.local-merge" ] || fail "relaunch refusal lost local merge receipt"
+  [ -e "$CASE/home/state/localrelaunch1.meta" ] || fail "relaunch refusal removed metadata"
+  [ ! -s "$CASE/treehouse.log" ] || fail "relaunch refusal reached cleanup"
+  assert_one_retirement_wake
+  pass "local landing receipt cannot authorize a relaunched worker"
+}
+
+test_duplicate_spawn_field_refuses() {
+  make_case duplicate-spawn duplicate-spawn1
+  write_ship_meta duplicate-spawn1 local-only
+  land_task duplicate-spawn1
+  printf 'spawn_gen=two\n' >> "$CASE/home/state/duplicate-spawn1.meta"
+  run_hook local-merged duplicate-spawn1 && fail "duplicate spawn field authorized retirement"
+  [ ! -e "$CASE/home/state/duplicate-spawn1.retirement" ] || fail "duplicate spawn field created an event"
+  [ ! -s "$CASE/treehouse.log" ] || fail "duplicate spawn field reached cleanup"
+  assert_one_retirement_wake
+  pass "duplicate spawn metadata refuses without partial identity"
+}
+
 test_backend_close_boundary_is_delegated() {
   make_case herdr-boundary herdr1
   write_scout_meta herdr1 herdr
@@ -403,6 +465,10 @@ test_missing_spawn_generation_refusal
 test_secondmate_exclusion
 test_duplicate_idempotence
 test_restart_recovery
+test_handoff_recovery_without_live_worker
+test_local_proof_rechecks_current_ancestry
+test_local_receipt_rejects_relaunched_worker
+test_duplicate_spawn_field_refuses
 test_backend_close_boundary_is_delegated
 
 echo "all worker retirement tests passed"

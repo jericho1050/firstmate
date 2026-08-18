@@ -86,6 +86,8 @@ FM_PR_RETIRE_DATA_IDENTITY=
 FM_PR_RETIRE_CHECK_IDENTITY=
 FM_PR_RETIRE_REG_HASH=
 FM_PR_RETIRE_REG_IDENTITY=
+FM_PR_RETIRE_SPAWN_GEN=
+FM_PR_RETIRE_ENDPOINT=
 FM_PR_RETIRE_RECEIPT_HASH=
 FM_PR_RETIRE_RECEIPT_IDENTITY=
 FM_PR_POLL_RETIREMENT_REJECTED=
@@ -656,9 +658,34 @@ fm_pr_poll_snapshot_matches() {
   [ "$reg_identity" = "$FM_PR_POLL_SNAPSHOT_REG_IDENTITY" ]
 }
 
+fm_pr_retirement_worker_identity() {
+  local state=$1 id=$2 root
+  if ! declare -F fm_retirement_receipt_identity_capture >/dev/null 2>&1; then
+    root=${FM_ROOT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+    # shellcheck source=bin/fm-backend.sh
+    . "$root/bin/fm-backend.sh"
+    # shellcheck source=bin/fm-worker-retirement-lib.sh
+    . "$root/bin/fm-worker-retirement-lib.sh"
+  fi
+  fm_retirement_receipt_identity_capture "$state" "$id"
+}
+
+fm_pr_retirement_notice_marker_present() {
+  local state=$1 id=$2 root marker
+  if ! declare -F fm_retirement_notice_marker_valid >/dev/null 2>&1; then
+    root=${FM_ROOT_OVERRIDE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+    # shellcheck source=bin/fm-backend.sh
+    . "$root/bin/fm-backend.sh"
+    # shellcheck source=bin/fm-worker-retirement-lib.sh
+    . "$root/bin/fm-worker-retirement-lib.sh"
+  fi
+  marker=$(fm_retirement_notice_marker_path "$state" "$id")
+  fm_retirement_notice_marker_valid "$state" "$id" "$marker"
+}
+
 fm_pr_poll_retirement_parse() {
   local file=$1 version id provider url host path number data_hash template_hash
-  local data_identity check_identity reg_hash reg_identity result _extra
+  local data_identity check_identity reg_hash reg_identity result worker_spawn_gen worker_endpoint extra
   FM_PR_RETIRE_ID=
   FM_PR_RETIRE_PROVIDER=
   FM_PR_RETIRE_URL=
@@ -671,6 +698,8 @@ fm_pr_poll_retirement_parse() {
   FM_PR_RETIRE_CHECK_IDENTITY=
   FM_PR_RETIRE_REG_HASH=
   FM_PR_RETIRE_REG_IDENTITY=
+  FM_PR_RETIRE_SPAWN_GEN=
+  FM_PR_RETIRE_ENDPOINT=
   [ -f "$file" ] && [ ! -L "$file" ] || return 1
   exec 9< "$file" || return 1
   IFS= read -r version <&9 || { exec 9<&-; return 1; }
@@ -687,9 +716,12 @@ fm_pr_poll_retirement_parse() {
   IFS= read -r reg_hash <&9 || { exec 9<&-; return 1; }
   IFS= read -r reg_identity <&9 || { exec 9<&-; return 1; }
   IFS= read -r result <&9 || { exec 9<&-; return 1; }
-  if IFS= read -r _extra <&9; then
-    exec 9<&-
-    return 1
+  if IFS= read -r worker_spawn_gen <&9; then
+    IFS= read -r worker_endpoint <&9 || { exec 9<&-; return 1; }
+    if IFS= read -r extra <&9; then
+      exec 9<&-
+      return 1
+    fi
   fi
   exec 9<&-
   [ "$version" = fm-pr-poll-retirement-v1 ] || return 1
@@ -706,6 +738,12 @@ fm_pr_poll_retirement_parse() {
   [[ "$reg_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
   [[ "$reg_identity" =~ ^[0-9]+:[0-9]+$ ]] || return 1
   [ "$result" = merged ] || return 1
+  if [ -n "${worker_spawn_gen:-}" ] || [ -n "${worker_endpoint:-}" ]; then
+    case "$worker_spawn_gen" in worker_spawn_gen=*) worker_spawn_gen=${worker_spawn_gen#worker_spawn_gen=} ;; *) return 1 ;; esac
+    case "$worker_endpoint" in worker_endpoint=*) worker_endpoint=${worker_endpoint#worker_endpoint=} ;; *) return 1 ;; esac
+    case "$worker_spawn_gen" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+    [[ "$worker_endpoint" =~ ^[0-9a-f]{64}$ ]] || return 1
+  fi
   FM_PR_RETIRE_ID=$id
   FM_PR_RETIRE_PROVIDER=$provider
   FM_PR_RETIRE_URL=$url
@@ -718,6 +756,8 @@ fm_pr_poll_retirement_parse() {
   FM_PR_RETIRE_CHECK_IDENTITY=$check_identity
   FM_PR_RETIRE_REG_HASH=$reg_hash
   FM_PR_RETIRE_REG_IDENTITY=$reg_identity
+  FM_PR_RETIRE_SPAWN_GEN=${worker_spawn_gen:-}
+  FM_PR_RETIRE_ENDPOINT=${worker_endpoint:-}
 }
 
 fm_pr_poll_retirement_receipt_valid() {
@@ -852,15 +892,21 @@ fm_pr_poll_retirement_discard_obsolete() {
 
 fm_pr_poll_retirement_publish() {
   local state=$1 id=$2 template=$3 result=$4 receipt state_device tmp
+  local worker_spawn_gen= worker_endpoint=
   [ "$result" = merged ] || return 1
   fm_pr_poll_snapshot_matches "$state" "$id" "$template" || return 1
   state_device=$(fm_pr_file_device "$state") || return 1
   receipt="$state/$id.pr-poll-retirement"
+  if fm_pr_retirement_worker_identity "$state" "$id"; then
+    worker_spawn_gen=$FM_RETIREMENT_RECEIPT_SPAWN_GEN
+    worker_endpoint=$FM_RETIREMENT_RECEIPT_ENDPOINT
+  fi
   fm_pr_regular_destination_on_device_or_absent "$receipt" "$state_device" || return 1
   [ ! -e "$receipt" ] && [ ! -L "$receipt" ] || return 1
   umask 077
   tmp=$(mktemp "$state/.fm-pr-poll-retirement.XXXXXX") || return 1
-  if ! printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+  if ! {
+    printf '%s\n' \
       fm-pr-poll-retirement-v1 \
       "$FM_PR_POLL_SNAPSHOT_ID" \
       "$FM_PR_POLL_SNAPSHOT_PROVIDER" \
@@ -874,7 +920,10 @@ fm_pr_poll_retirement_publish() {
       "$FM_PR_POLL_SNAPSHOT_CHECK_IDENTITY" \
       "$FM_PR_POLL_SNAPSHOT_REG_HASH" \
       "$FM_PR_POLL_SNAPSHOT_REG_IDENTITY" \
-      merged > "$tmp" \
+      merged
+    [ -z "$worker_spawn_gen" ] || printf 'worker_spawn_gen=%s\n' "$worker_spawn_gen"
+    [ -z "$worker_endpoint" ] || printf 'worker_endpoint=%s\n' "$worker_endpoint"
+  } > "$tmp" \
     || ! chmod 0600 "$tmp" \
     || ! fm_pr_private_file_valid "$tmp" 600 "$state_device" \
     || ! fm_pr_poll_retirement_parse "$tmp" \
@@ -897,6 +946,9 @@ fm_pr_poll_retirement_recover_one() {
   receipt="$state/$id.pr-poll-retirement"
   if [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then
     return 0
+  fi
+  if ! fm_pr_poll_retirement_receipt_valid "$state" "$id"; then
+    return 1
   fi
   if [ "$preserve_worker_receipt" = 1 ] \
     && [ -f "$state/$id.meta" ] && [ ! -L "$state/$id.meta" ]; then
@@ -940,6 +992,10 @@ fm_pr_poll_retirement_recover_all() {
     id=$(basename "$receipt" .pr-poll-retirement)
     if ! fm_pr_task_id_valid "$id" \
       || ! fm_pr_poll_retirement_recover_one "$state" "$id" "$template" "$preserve_worker_receipt"; then
+      if [ "$preserve_worker_receipt" = 1 ] \
+        && fm_pr_retirement_notice_marker_present "$state" "$id"; then
+        continue
+      fi
       FM_PR_POLL_RETIREMENT_REJECTED="$FM_PR_POLL_RETIREMENT_REJECTED $receipt"
     fi
   done

@@ -90,14 +90,21 @@ require_regular_event_path() {
   [ -f "$event" ] && [ ! -L "$event" ]
 }
 
+pre_event_refuse() {
+  local id=$1 reason=$2
+  echo "REFUSED: task $id $reason; preserving everything." >&2
+  retirement_pre_event_notice "$id" "$reason" || true
+  return 1
+}
+
 publish_event() {
   local id=$1 event_type=$2 meta=$3 event_file=$4 kind mode spawn_gen endpoint proof='' report='' report_path tmp
   [ -f "$meta" ] && [ ! -L "$meta" ] || {
-    echo "REFUSED: task $id has no durable metadata; preserving everything." >&2
+    pre_event_refuse "$id" "has no durable metadata"
     return 1
   }
   if ! fm_backend_validate_task_endpoint "$meta" "$id"; then
-    retirement_pre_event_notice "$id" "endpoint identity is ambiguous or invalid" || true
+    pre_event_refuse "$id" "has an ambiguous or invalid endpoint identity"
     return 1
   fi
   kind=$(meta_kind "$meta")
@@ -107,37 +114,33 @@ publish_event() {
     local-merged:ship:local-only) ;;
     scout-complete:scout:scout) ;;
     pr-merged:secondmate:*|local-merged:secondmate:*|scout-complete:secondmate:*)
-      echo "REFUSED: persistent secondmate $id is excluded from worker retirement; preserving everything." >&2
+      pre_event_refuse "$id" "is a persistent secondmate excluded from worker retirement"
       return 1
       ;;
     *)
-      echo "REFUSED: event $event_type does not match task $id's kind=$kind mode=$mode; preserving everything." >&2
+      pre_event_refuse "$id" "event $event_type does not match kind=$kind mode=$mode"
       return 1
       ;;
   esac
 
   spawn_gen=$(meta_value "$meta" spawn_gen)
   [ -n "$spawn_gen" ] || {
-    echo "REFUSED: task $id has no exact spawn incarnation; preserving everything." >&2
-    retirement_pre_event_notice "$id" "exact spawn incarnation is missing" || true
+    pre_event_refuse "$id" "has no exact spawn incarnation"
     return 1
   }
   case "$spawn_gen" in ''|*[!A-Za-z0-9._-]*)
-    echo "REFUSED: task $id has an invalid spawn incarnation; preserving everything." >&2
-    retirement_pre_event_notice "$id" "exact spawn incarnation is invalid" || true
+    pre_event_refuse "$id" "has an invalid spawn incarnation"
     return 1
     ;;
   esac
   if ! endpoint=$(fm_retirement_meta_identity "$meta" "$id"); then
-    echo "REFUSED: task $id endpoint identity is ambiguous; preserving everything." >&2
-    retirement_pre_event_notice "$id" "endpoint identity is ambiguous or invalid" || true
+    pre_event_refuse "$id" "has an ambiguous or invalid endpoint identity"
     return 1
   fi
 
   if [ "$event_type" = local-merged ] \
     && ! fm_retirement_local_merge_confirmed "$STATE" "$meta" "$id"; then
-    echo "REFUSED: local-only task $id is not confirmed merged into its default branch; preserving everything." >&2
-    retirement_pre_event_notice "$id" "local-only work is not confirmed merged into the default branch" || true
+    pre_event_refuse "$id" "local-only work is not confirmed merged into the default branch"
     return 1
   fi
 
@@ -145,7 +148,12 @@ publish_event() {
     pr-merged)
       receipt="$STATE/$id.pr-poll-retirement"
       if ! fm_pr_poll_retirement_receipt_valid "$STATE" "$id"; then
-        echo "REFUSED: task $id lacks a validated merged PR event; preserving everything." >&2
+        pre_event_refuse "$id" "lacks a validated merged PR event"
+        return 1
+      fi
+      if [ "$FM_PR_RETIRE_SPAWN_GEN" != "$spawn_gen" ] \
+        || [ "$FM_PR_RETIRE_ENDPOINT" != "$endpoint" ]; then
+        pre_event_refuse "$id" "has a merged PR receipt bound to a different worker incarnation"
         return 1
       fi
       proof="pr-poll:$(fm_pr_sha256 "$receipt")" || return 1
@@ -156,15 +164,18 @@ publish_event() {
     scout-complete)
       report_path="$DATA/$id/report.md"
       if [ ! -f "$report_path" ] || [ -L "$report_path" ]; then
-        echo "REFUSED: scout task $id has no regular report; preserving everything." >&2
+        pre_event_refuse "$id" "scout task has no regular report"
         return 1
       fi
       if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
         FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-decision-hold.sh" verify "$id" >/dev/null 2>&1; then
-        echo "REFUSED: scout task $id has not passed its unresolved-decision completion gate; preserving everything." >&2
+        pre_event_refuse "$id" "scout task has not passed its unresolved-decision completion gate"
         return 1
       fi
-      report=$(fm_retirement_event_report_hash "$report_path") || return 1
+      if ! report=$(fm_retirement_event_report_hash "$report_path"); then
+        pre_event_refuse "$id" "scout task report could not be validated"
+        return 1
+      fi
       proof=scout-report
       ;;
   esac
@@ -174,7 +185,7 @@ publish_event() {
       || [ "$FM_RETIREMENT_EVENT_TASK" != "$id" ] \
       || [ "$FM_RETIREMENT_EVENT_TYPE" != "$event_type" ] \
       || [ "$FM_RETIREMENT_EVENT_ENDPOINT" != "$endpoint" ]; then
-      echo "REFUSED: task $id already has a conflicting retirement event; preserving everything." >&2
+      pre_event_refuse "$id" "already has a conflicting retirement event"
       return 1
     fi
     return 0
@@ -192,6 +203,7 @@ publish_event() {
     printf 'proof=%s\n' "$proof"
     printf 'report=%s\n' "$report"
     printf 'notice_emitted=0\n'
+    printf 'teardown_handoff=0\n'
   } > "$tmp" || { rm -f "$tmp"; return 1; }
   chmod 0600 "$tmp" || { rm -f "$tmp"; return 1; }
   if ! mv -f -- "$tmp" "$event_file"; then
@@ -218,9 +230,11 @@ retirement_pre_event_notice() {
     return 0
   fi
   if fm_wake_queued_keys check 2>/dev/null | grep -Fx -- "$key" >/dev/null 2>&1; then
-    return 0
+    fm_retirement_notice_marker_mark "$STATE" "$id"
+    return $?
   fi
   fm_wake_append check "$key" "$payload" || return 1
+  fm_retirement_notice_marker_mark "$STATE" "$id" || return 1
   printf 'actionable: %s\n' "$payload"
 }
 
@@ -255,13 +269,19 @@ refuse_event() {
 }
 
 validate_event_proof() {
-  local event_file=$1 id=$2 report_path
+  local event_file=$1 id=$2 report_path meta
+  meta="$STATE/$id.meta"
   case "$FM_RETIREMENT_EVENT_TYPE" in
     pr-merged)
       case "$FM_RETIREMENT_EVENT_PROOF" in pr-poll:*) ;; *) return 1 ;; esac
       ;;
     local-merged)
       [ "$FM_RETIREMENT_EVENT_PROOF" = local-merge ] || return 1
+      if [ "$FM_RETIREMENT_EVENT_HANDOFF" = 1 ]; then
+        fm_retirement_local_merge_ancestry_confirmed "$STATE" "$meta" "$id"
+      else
+        fm_retirement_local_merge_confirmed "$STATE" "$meta" "$id"
+      fi
       ;;
     scout-complete)
       [ "$FM_RETIREMENT_EVENT_PROOF" = scout-report ] || return 1
@@ -309,18 +329,20 @@ apply_event() {
     refuse_event "$event_file" "$id" "open decisions remain"
     return 1
   fi
-  state_line_rc=0
-  state_line=$(fm_retirement_pipeline_state "$id") || state_line_rc=$?
-  if [ "$state_line_rc" -ne 0 ]; then
-    case "$state_line_rc" in
-      1) reason="pipeline custody is active, parked, paused, blocked, or unknown" ;;
-      *) reason="pipeline custody could not be verified" ;;
-    esac
-    refuse_event "$event_file" "$id" "$reason"
-    return 1
+  if [ "$FM_RETIREMENT_EVENT_HANDOFF" = 0 ]; then
+    state_line_rc=0
+    state_line=$(fm_retirement_pipeline_state "$id") || state_line_rc=$?
+    if [ "$state_line_rc" -ne 0 ]; then
+      case "$state_line_rc" in
+        1) reason="pipeline custody is active, parked, paused, blocked, or unknown" ;;
+        *) reason="pipeline custody could not be verified" ;;
+      esac
+      refuse_event "$event_file" "$id" "$reason"
+      return 1
+    fi
+    state=$state_line
+    case "$state" in done|failed) ;; *) refuse_event "$event_file" "$id" "worker is not in a terminal state"; return 1 ;; esac
   fi
-  state=$state_line
-  case "$state" in done|failed) ;; *) refuse_event "$event_file" "$id" "worker is not in a terminal state"; return 1 ;; esac
 
   if FM_WORKER_RETIREMENT_EVENT="$event_file" \
     FM_WORKER_RETIREMENT_CREW_STATE_BIN="${FM_WORKER_RETIREMENT_CREW_STATE_BIN:-}" \
@@ -356,7 +378,7 @@ handle_one() {
     return 0
   fi
   [ -f "$meta" ] && [ ! -L "$meta" ] || {
-    echo "REFUSED: task $id metadata is ambiguous; preserving everything." >&2
+    pre_event_refuse "$id" "metadata is ambiguous"
     return 1
   }
   meta_lock=$(fm_meta_lock_path "$meta") || return 1
@@ -401,6 +423,12 @@ recover_local_landed() {
     kind=$(meta_kind "$meta")
     mode=$(meta_mode "$meta")
     [ "$kind" = ship ] && [ "$mode" = local-only ] || continue
+    if fm_retirement_local_merge_ancestry_confirmed "$STATE" "$meta" "$id" \
+      && ! fm_retirement_local_merge_confirmed "$STATE" "$meta" "$id"; then
+      pre_event_refuse "$id" "has a local merge receipt bound to a different worker incarnation"
+      rc=1
+      continue
+    fi
     fm_retirement_local_merge_confirmed "$STATE" "$meta" "$id" || continue
     if ! handle_one local-merged "$id"; then
       rc=1
@@ -418,7 +446,7 @@ handle_existing() {
   valid_id "$id" || return 1
   lock_event "$id" || return 1
   require_regular_event_path "$event_file" "$id" || {
-    echo "REFUSED: retirement event path is ambiguous; preserving everything." >&2
+    refuse_event "$event_file" "$id" "retirement event path is ambiguous"
     return 1
   }
   apply_event "$event_file"

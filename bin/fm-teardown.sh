@@ -2388,13 +2388,35 @@ fi
 # lifecycle lock, closing the race in which a worker could be relaunched after
 # the hook's read but before destructive cleanup. Ordinary manual teardown keeps
 # its historical parked-run handling below.
-if [ -n "${FM_WORKER_RETIREMENT_EVENT:-}" ] && [ "$KIND" != secondmate ]; then
+if [ -n "${FM_WORKER_RETIREMENT_EVENT:-}" ] \
+  && [ "$KIND" != secondmate ] \
+  && [ "${FM_RETIREMENT_EVENT_HANDOFF:-0}" != 1 ]; then
   retirement_state_rc=0
   retirement_state=$(fm_retirement_pipeline_state "$ID") || retirement_state_rc=$?
   if [ "$retirement_state_rc" -ne 0 ] || { [ "$retirement_state" != "done" ] && [ "$retirement_state" != "failed" ]; }; then
     echo "REFUSED: worker-retirement pipeline custody is not terminal for $ID; preserving task state." >&2
     exit 1
   fi
+fi
+
+if [ -n "${FM_WORKER_RETIREMENT_EVENT:-}" ]; then
+  if [ "$KIND" = ship ] && [ "$MODE" = local-only ]; then
+    if [ "${FM_RETIREMENT_EVENT_HANDOFF:-0}" = 1 ] || [ ! -d "$WT" ]; then
+      fm_retirement_local_merge_ancestry_confirmed "$STATE" "$META" "$ID" || {
+        echo "REFUSED: local-only work is not confirmed merged into the current default branch; preserving task state." >&2
+        exit 1
+      }
+    else
+      fm_retirement_local_merge_confirmed "$STATE" "$META" "$ID" || {
+        echo "REFUSED: local-only worker branch changed before teardown; preserving task state." >&2
+        exit 1
+      }
+    fi
+  fi
+  fm_retirement_event_set_handoff "$FM_WORKER_RETIREMENT_EVENT" 1 || {
+    echo "REFUSED: worker-retirement teardown handoff could not be persisted; preserving task state." >&2
+    exit 1
+  }
 fi
 
 # Every landed/discard-work refusal above has now passed (or --force skipped
