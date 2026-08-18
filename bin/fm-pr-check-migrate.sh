@@ -345,7 +345,18 @@ if [ ! -d "$STATE" ] || [ -L "$STATE" ]; then
 fi
 STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
 [ -n "$STATE_DEVICE" ] || exit 1
-if ! fm_pr_poll_retirement_recover_all "$STATE" "$TEMPLATE"; then
+for retirement_receipt in "$STATE"/*.pr-poll-retirement; do
+  [ -e "$retirement_receipt" ] || [ -L "$retirement_receipt" ] || continue
+  retirement_id=$(basename "$retirement_receipt" .pr-poll-retirement)
+  retirement_meta="$STATE/$retirement_id.meta"
+  if fm_pr_task_id_valid "$retirement_id" \
+    && [ -f "$retirement_meta" ] \
+    && [ ! -L "$retirement_meta" ] \
+    && fm_pr_poll_retirement_receipt_valid "$STATE" "$retirement_id"; then
+    "$SCRIPT_DIR/fm-worker-retirement.sh" pr-merged "$retirement_id" >/dev/null 2>&1 || true
+  fi
+done
+if ! fm_pr_poll_retirement_recover_all "$STATE" "$TEMPLATE" 1; then
   echo "PR_CHECK_MIGRATION: pending PR poll retirement could not be validated:$FM_PR_POLL_RETIREMENT_REJECTED" >&2
   exit 1
 fi

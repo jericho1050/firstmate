@@ -96,7 +96,10 @@ publish_event() {
     echo "REFUSED: task $id has no durable metadata; preserving everything." >&2
     return 1
   }
-  fm_backend_validate_task_endpoint "$meta" "$id" || return 1
+  if ! fm_backend_validate_task_endpoint "$meta" "$id"; then
+    retirement_pre_event_notice "$id" "endpoint identity is ambiguous or invalid" || true
+    return 1
+  fi
   kind=$(meta_kind "$meta")
   mode=$(meta_mode "$meta")
   case "$event_type:$kind:$mode" in
@@ -114,16 +117,22 @@ publish_event() {
   esac
 
   spawn_gen=$(meta_value "$meta" spawn_gen)
-  [ -n "$spawn_gen" ] || spawn_gen=legacy-$(fm_retirement_meta_identity "$meta" "$id" | cut -c1-24)
+  [ -n "$spawn_gen" ] || {
+    echo "REFUSED: task $id has no exact spawn incarnation; preserving everything." >&2
+    retirement_pre_event_notice "$id" "exact spawn incarnation is missing" || true
+    return 1
+  }
   case "$spawn_gen" in ''|*[!A-Za-z0-9._-]*)
     echo "REFUSED: task $id has an invalid spawn incarnation; preserving everything." >&2
+    retirement_pre_event_notice "$id" "exact spawn incarnation is invalid" || true
     return 1
     ;;
   esac
-  endpoint=$(fm_retirement_meta_identity "$meta" "$id") || {
+  if ! endpoint=$(fm_retirement_meta_identity "$meta" "$id"); then
     echo "REFUSED: task $id endpoint identity is ambiguous; preserving everything." >&2
+    retirement_pre_event_notice "$id" "endpoint identity is ambiguous or invalid" || true
     return 1
-  }
+  fi
 
   case "$event_type" in
     pr-merged)
@@ -190,6 +199,17 @@ open_decisions() {
   local status_file=$1
   [ -f "$status_file" ] || return 0
   status_open_decisions "$status_file"
+}
+
+retirement_pre_event_notice() {
+  local id=$1 reason=$2 key payload
+  key="worker-retirement:$id"
+  payload="worker retirement needs attention for $id: $reason"
+  if fm_wake_queued_keys check 2>/dev/null | grep -Fx -- "$key" >/dev/null 2>&1; then
+    return 0
+  fi
+  fm_wake_append check "$key" "$payload" || return 1
+  printf 'actionable: %s\n' "$payload"
 }
 
 retirement_notice() {

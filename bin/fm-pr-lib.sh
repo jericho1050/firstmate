@@ -891,8 +891,9 @@ fm_pr_poll_retirement_publish() {
 
 fm_pr_poll_retirement_recover_one() {
   local state=$1 id=$2 template=$3 receipt state_device check data registration
-  local receipt_hash receipt_identity
+  local receipt_hash receipt_identity preserve_worker_receipt=${4:-0}
   fm_pr_task_id_valid "$id" || return 1
+  case "$preserve_worker_receipt" in 0|1) ;; *) return 2 ;; esac
   receipt="$state/$id.pr-poll-retirement"
   if [ ! -e "$receipt" ] && [ ! -L "$receipt" ]; then
     return 0
@@ -900,6 +901,10 @@ fm_pr_poll_retirement_recover_one() {
   if ! fm_pr_poll_retirement_state_valid "$state" "$id"; then
     fm_pr_poll_retirement_discard_obsolete "$state" "$id" "$template" && return 0
     return 1
+  fi
+  if [ "$preserve_worker_receipt" = 1 ] \
+    && [ -f "$state/$id.meta" ] && [ ! -L "$state/$id.meta" ]; then
+    return 0
   fi
   state_device=$(fm_pr_file_device "$state") || return 1
   check="$state/$id.check.sh"
@@ -928,13 +933,13 @@ fm_pr_poll_retirement_recover_one() {
 }
 
 fm_pr_poll_retirement_recover_all() {
-  local state=$1 template=$2 receipt id
+  local state=$1 template=$2 preserve_worker_receipt=${3:-0} receipt id
   FM_PR_POLL_RETIREMENT_REJECTED=
   for receipt in "$state"/*.pr-poll-retirement; do
     [ -e "$receipt" ] || [ -L "$receipt" ] || continue
     id=$(basename "$receipt" .pr-poll-retirement)
     if ! fm_pr_task_id_valid "$id" \
-      || ! fm_pr_poll_retirement_recover_one "$state" "$id" "$template"; then
+      || ! fm_pr_poll_retirement_recover_one "$state" "$id" "$template" "$preserve_worker_receipt"; then
       FM_PR_POLL_RETIREMENT_REJECTED="$FM_PR_POLL_RETIREMENT_REJECTED $receipt"
     fi
   done

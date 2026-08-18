@@ -794,14 +794,19 @@ printf '%s\n' "$FM_WATCH_DELIVERY_IDENTITY" > "$WATCH_LOCK/pid-identity" 2>/dev/
 # hook writes its worker event must not lose the landing signal. Give every
 # receipt one chance to become an identity-bound worker event before the older
 # poll-artifact recovery can retire that receipt.
+retirement_handoff_actionable=0
 for retirement_receipt in "$STATE"/*.pr-poll-retirement; do
   [ -e "$retirement_receipt" ] || [ -L "$retirement_receipt" ] || continue
   retirement_id=$(basename "$retirement_receipt" .pr-poll-retirement)
   if fm_pr_task_id_valid "$retirement_id" \
     && [ -f "$STATE/$retirement_id.meta" ] \
-    && [ ! -L "$STATE/$retirement_id.meta" ] \
-    && [ -n "$(fm_meta_get "$STATE/$retirement_id.meta" spawn_gen)" ]; then
-    "$SCRIPT_DIR/fm-worker-retirement.sh" pr-merged "$retirement_id" >/dev/null 2>&1 || true
+    && [ ! -L "$STATE/$retirement_id.meta" ]; then
+    retirement_handoff_out=$("$SCRIPT_DIR/fm-worker-retirement.sh" pr-merged "$retirement_id" 2>&1) || true
+    if printf '%s\n' "$retirement_handoff_out" | grep -Fq 'actionable:'; then
+      retirement_handoff_actionable=1
+    elif fm_wake_queued_keys check 2>/dev/null | grep -Fx -- "worker-retirement:$retirement_id" >/dev/null 2>&1; then
+      retirement_handoff_actionable=1
+    fi
   fi
 done
 
@@ -833,11 +838,14 @@ fi
 # Preserve its validated receipt while a worker-retirement event is unresolved;
 # fm-teardown owns receipt removal after the landing checks and endpoint close.
 if [ "$retirement_events_pending" -eq 0 ] \
-  && ! fm_pr_poll_retirement_recover_all "$STATE" "$SCRIPT_DIR/fm-pr-poll.sh"; then
+  && ! fm_pr_poll_retirement_recover_all "$STATE" "$SCRIPT_DIR/fm-pr-poll.sh" 1; then
   reason="check: rejected unauthenticated PR poll retirement receipts:$FM_PR_POLL_RETIREMENT_REJECTED"
   fm_wake_append check pr-poll-retirement "$reason" || exit 1
   touch "$STATE/.last-check"
   wake "$reason"
+fi
+if [ "$retirement_handoff_actionable" -eq 1 ]; then
+  wake "check: worker-retirement recovery"
 fi
 
 resurface_after_downtime() {
@@ -967,11 +975,16 @@ while :; do
             # The authenticated merged result is the only PR-shipping event
             # that may authorize full worker pruning. Invalid legacy fixtures
             # or ambiguous metadata remain poll-only and are preserved.
-            if [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ] \
-              && [ -n "$(fm_meta_get "$STATE/$id.meta" spawn_gen)" ]; then
-              "$SCRIPT_DIR/fm-worker-retirement.sh" pr-merged "$id" >/dev/null 2>&1 || true
-            fi
-            if [ ! -e "$STATE/$id.retirement" ] && [ ! -L "$STATE/$id.retirement" ]; then
+            if [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ]; then
+              if "$SCRIPT_DIR/fm-worker-retirement.sh" pr-merged "$id" >/dev/null 2>&1; then
+                if [ ! -e "$STATE/$id.retirement" ] && [ ! -L "$STATE/$id.retirement" ]; then
+                  fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" \
+                    || triage_log "merged PR poll retirement remains recoverable for $id"
+                fi
+              else
+                triage_log "merged PR poll retirement remains preserved for $id"
+              fi
+            elif [ ! -e "$STATE/$id.retirement" ] && [ ! -L "$STATE/$id.retirement" ]; then
               fm_pr_poll_retirement_recover_one "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh" \
                 || triage_log "merged PR poll retirement remains recoverable for $id"
             fi
