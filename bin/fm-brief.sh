@@ -244,6 +244,10 @@ else
   PROJECT_CLONES_BODY=$(printf '%s\n' "$SECONDMATE_PROJECTS" | tr ' ' '\n' | sed 's/^/- /')
   PROJECT_CLONES_NOTE="The projects above are local clones for work you supervise; they are not an exclusive ownership claim."
 fi
+# Keep the existence check above fail-fast, and make the final write itself
+# fail closed if another invocation creates the brief between that check and
+# this redirect. Generated briefs are immutable once published.
+set -C
 cat > "$BRIEF" <<EOF
 You are a persistent second mate managed by the main firstmate. Work on your own; do not wait for a human.
 
