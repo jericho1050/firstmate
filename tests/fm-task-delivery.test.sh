@@ -307,7 +307,7 @@ test_promote_refuses_a_symlinked_task_record() {
 # prints against a capturing fm-send.sh, and asserts on the message the worker would
 # actually receive - for every supported mode.
 test_promotion_delivers_the_real_definition_of_done() {
-  local home meta out sendroot payload mode id brief_dod delivered_dod
+  local home meta out sendroot payload mode id method_delivery brief_method delivered_method brief_dod delivered_dod
   home="$TMP_ROOT/promote-dod/home"
   sendroot="$TMP_ROOT/promote-dod/sendroot"
   mkdir -p "$home/state" "$sendroot/bin"
@@ -354,6 +354,21 @@ STUB
       "$mode: promoted worker did not receive the Captain's intent subsection"
     assert_grep "## Firstmate spec" "$payload" \
       "$mode: promoted worker did not receive the Firstmate spec subsection"
+    assert_grep "# Method" "$payload" \
+      "$mode: promoted worker did not receive the Method section"
+    assert_grep "1. REPRODUCE BEFORE TOUCHING CODE." "$payload" \
+      "$mode: promoted worker did not receive the reproduction step"
+    assert_grep "2. SWEEP THE CLASS BEFORE THE FIRST EDIT." "$payload" \
+      "$mode: promoted worker did not receive the class-sweep step"
+    assert_grep "3. SELF-VERIFY BEFORE VALIDATION." "$payload" \
+      "$mode: promoted worker did not receive the self-verification step"
+    case "$mode" in
+      no-mistakes) method_delivery="only then start no-mistakes." ;;
+      direct-PR) method_delivery="only then push and open the PR." ;;
+      local-only) method_delivery="only then stop with a clean ready branch." ;;
+    esac
+    assert_grep "$method_delivery" "$payload" \
+      "$mode: promoted worker did not receive its mode-specific Method delivery step"
 
     # Compare the public outputs of both real generation paths. The promoted
     # payload ends at its Definition of done, as does an ordinary generated
@@ -361,6 +376,14 @@ STUB
     rm "$home/data/$id/brief.md"
     FM_HOME="$home" "$BRIEF" "$id" fixture-project --mode "$mode" >/dev/null 2>&1 \
       || fail "$mode: ordinary ship brief generation should succeed"
+    brief_method="$TMP_ROOT/promote-dod/brief-method-$id"
+    delivered_method="$TMP_ROOT/promote-dod/delivered-method-$id"
+    awk '/^# Method$/ { emit=1 } emit { if (seen && /^# /) exit; print; seen=1 }' \
+      "$home/data/$id/brief.md" > "$brief_method"
+    awk '/^# Method$/ { emit=1 } emit { if (seen && /^# /) exit; print; seen=1 }' \
+      "$payload" > "$delivered_method"
+    cmp -s "$brief_method" "$delivered_method" \
+      || fail "$mode: promotion and ordinary brief generation delivered different Method sections"
     brief_dod="$TMP_ROOT/promote-dod/brief-dod-$id"
     delivered_dod="$TMP_ROOT/promote-dod/delivered-dod-$id"
     awk '/^# Definition of done$/ { emit=1 } emit' "$home/data/$id/brief.md" > "$brief_dod"

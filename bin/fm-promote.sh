@@ -163,6 +163,7 @@ PROMOTION_ASK_USER_BLOCK=
 if [ "$MODE" = no-mistakes ]; then
   PROMOTION_ASK_USER_BLOCK=$(fm_ask_user_escalation_block "$DATA" "$ID")
 fi
+SHIP_METHOD_SECTION=$(fm_ship_method_block "$MODE") || exit 1
 mkdir -p "$DATA/$ID"
 [ ! -d "$INSTRUCTIONS" ] || { echo "error: ship instructions path is a directory: $INSTRUCTIONS" >&2; exit 1; }
 TMP="$DATA/$ID/.ship-instructions.md.${BASHPID:-$$}"
@@ -186,6 +187,8 @@ EOF
 $PROMOTION_ASK_USER_BLOCK
 7. Treat the scout-time Firstmate spec and any unmarked legacy \`# Task\` text as investigation context, not captain intent or ship-time instructions.
 EOF
+  printf '\n'
+  printf '%s\n' "$SHIP_METHOD_SECTION"
   printf '\n'
   fm_dod_block "$MODE" "$ID"
 } > "$TMP" || { echo "error: could not render ship instructions for mode=$MODE" >&2; exit 1; }

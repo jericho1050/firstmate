@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Single owner of a ship task's mode-specific "Definition of done" block.
-# Sourced by bin/fm-brief.sh, which renders it into a generated ship brief, and by
+# Single owner of a ship task's mode-specific delivery blocks, including the
+# "Definition of done" and Method sections.
+# Sourced by bin/fm-brief.sh, which renders them into a generated ship brief, and by
 # bin/fm-promote.sh, which renders it into the ship instructions a promoted scout
 # receives. Both paths must hand the worker the same contract: a promoted
 # no-mistakes worker that never received the ask-user escalation rule or the
@@ -187,6 +188,24 @@ fm_ask_user_escalation_block() {  # <data-dir> <task-id>
    For a no-mistakes ask-user gate specifically, escalate all ask-user findings as one event plus one snapshot file, using that same shape even when the gate holds only a single ask-user finding: write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority), to \`$data/$id/nm-<run>-findings.txt\`, then report the gate with
    \`needs-decision [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file=$data/$id/nm-<run>-findings.txt\`
    naming every ask-user finding id from that gate. The status line only points at the file; it never restates or summarizes a finding's content.
+EOF
+}
+
+fm_ship_method_block() {  # <mode>
+  local mode=$1 delivery
+  case "$mode" in
+    no-mistakes) delivery="only then start no-mistakes." ;;
+    direct-PR) delivery="only then push and open the PR." ;;
+    local-only) delivery="only then stop with a clean ready branch." ;;
+    *)
+      echo "error: fm_ship_method_block: unknown delivery mode '$mode'" >&2
+      return 1 ;;
+  esac
+  cat <<EOF
+# Method
+1. REPRODUCE BEFORE TOUCHING CODE. Establish a failing test or capture wrong behaviour in-tree that names the defect before editing code. For a feature rather than a bug, use a failing test for the new behaviour; without reproduction, do not fix.
+2. SWEEP THE CLASS BEFORE THE FIRST EDIT. If the change adds, moves, or renames a fact, grep every site that defines, rebuilds, filters, or persists it before editing any of them, and record the count found. Fix all sites in the same change, then report how many were found, how many were fixed, and why each remaining site is correct as it stands.
+3. SELF-VERIFY BEFORE VALIDATION. Run the same gate commands on clean origin/main and on the branch and compare results. Prove every new behavioural test can fail by breaking it once, confirm the deletion fence is empty against the pushed HEAD with \`git diff --name-status origin/main...HEAD\`, and drive the visible surface locally; $delivery If validation finds something one of these steps would have caught, call it a workflow defect in the report.
 EOF
 }
 
