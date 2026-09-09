@@ -250,10 +250,17 @@ test_ship_method_section_is_ship_only() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" method-local-only some-proj --mode local-only >/dev/null 2>&1 \
     || fail "local-only Method fixture did not scaffold"
   local_only="$home/data/method-local-only/brief.md"
-  assert_grep "clean local \`main\`" "$local_only" \
+  assert_grep "clean local default branch" "$local_only" \
     "local-only Method section did not use the local default branch"
-  assert_grep 'git diff --name-status main...HEAD' "$local_only" \
-    "local-only Method section did not use the local deletion fence"
+  assert_grep "refs/remotes/origin/HEAD" "$local_only" \
+    "local-only Method section did not resolve the remote default branch"
+  assert_grep "falling back to the first existing local branch among \`main\` and \`master\`" \
+    "$local_only" \
+    "local-only Method section did not cover local main/master fallback"
+  assert_grep "git diff --name-status \"\$default_branch\"...HEAD" "$local_only" \
+    "local-only Method section did not use the resolved deletion fence"
+  assert_no_grep 'git diff --name-status main...HEAD' "$local_only" \
+    "local-only Method section hard-coded main in the deletion fence"
   assert_no_grep "origin/main" "$local_only" \
     "local-only Method section referenced an unavailable remote"
   assert_no_grep "pushed HEAD" "$local_only" \

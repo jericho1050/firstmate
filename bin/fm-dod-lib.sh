@@ -202,7 +202,7 @@ fm_ship_method_block() {  # <mode>
       delivery="only then push and open the PR."
       ;;
     local-only)
-      verification="Run the same gate commands on clean local \`main\` and on the branch and compare results. Prove every new behavioural test can fail by breaking it once, confirm the deletion fence is empty against the local HEAD with \`git diff --name-status main...HEAD\`, and drive the visible surface locally."
+      verification="Run the same gate commands on clean local default branch and on the branch and compare results. Prove every new behavioural test can fail by breaking it once, resolve the local default branch from \`refs/remotes/origin/HEAD\` (stripping \`origin/\` and falling back to the first existing local branch among \`main\` and \`master\`), then confirm the deletion fence is empty against the local HEAD with \`git diff --name-status \"\$default_branch\"...HEAD\`, and drive the visible surface locally."
       delivery="only then stop with a clean ready branch."
       ;;
     *)
