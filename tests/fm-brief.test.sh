@@ -221,6 +221,34 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+test_ship_method_section_is_ship_only() {
+  local home ship scout setup_line method_line rules_line
+  home="$TMP_ROOT/method-section-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" method-ship some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "ship method fixture did not scaffold"
+  ship="$home/data/method-ship/brief.md"
+  assert_grep "# Method" "$ship" "ship brief missing Method section"
+  assert_grep "1. REPRODUCE BEFORE TOUCHING CODE." "$ship" \
+    "ship Method section missing reproduction step"
+  assert_grep "2. SWEEP THE CLASS BEFORE THE FIRST EDIT." "$ship" \
+    "ship Method section missing class-sweep step"
+  assert_grep "3. SELF-VERIFY BEFORE VALIDATION." "$ship" \
+    "ship Method section missing self-verification step"
+  setup_line=$(grep -n '^# Setup$' "$ship" | cut -d: -f1)
+  method_line=$(grep -n '^# Method$' "$ship" | cut -d: -f1)
+  rules_line=$(grep -n '^# Rules$' "$ship" | cut -d: -f1)
+  [ "$setup_line" -lt "$method_line" ] && [ "$method_line" -lt "$rules_line" ] \
+    || fail "ship Method section must be between Setup and Rules"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" method-scout some-proj --scout >/dev/null 2>&1 \
+    || fail "scout method fixture did not scaffold"
+  scout="$home/data/method-scout/brief.md"
+  assert_no_grep "# Method" "$scout" "scout brief received ship-only Method section"
+  pass "fm-brief.sh: ship Method section emits all three steps and scouts omit it"
+}
+
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
 # unusable value must stop the scaffold instead of silently defaulting. The
 # no-mistakes-prod-only row is the conditional registry policy: it is never a task
@@ -873,6 +901,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_ship_method_section_is_ship_only
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply

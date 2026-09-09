@@ -353,6 +353,14 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
 
+IFS= read -r -d '' SHIP_METHOD_SECTION <<'EOF' || true
+# Method
+1. REPRODUCE BEFORE TOUCHING CODE. Establish a failing test or capture wrong behaviour in-tree that names the defect before editing code. For a feature rather than a bug, use a failing test for the new behaviour; without reproduction, do not fix.
+2. SWEEP THE CLASS BEFORE THE FIRST EDIT. If the change adds, moves, or renames a fact, grep every site that defines, rebuilds, filters, or persists it before editing any of them, and record the count found. Fix all sites in the same change, then report how many were found, how many were fixed, and why each remaining site is correct as it stands.
+3. SELF-VERIFY BEFORE VALIDATION. Run the same gate commands on clean origin/main and on the branch and compare results. Prove every new behavioural test can fail by breaking it once, confirm the deletion fence is empty against the pushed HEAD with `git diff --name-status origin/main...HEAD`, and drive the visible surface locally; only then start no-mistakes. If validation finds something one of these steps would have caught, call it a workflow defect in the report.
+EOF
+SHIP_METHOD_SECTION=${SHIP_METHOD_SECTION%$'\n'}
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -455,6 +463,8 @@ The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
+
+$SHIP_METHOD_SECTION
 
 # Rules
 $RULE1
