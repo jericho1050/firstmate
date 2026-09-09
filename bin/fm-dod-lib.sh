@@ -192,11 +192,19 @@ EOF
 }
 
 fm_ship_method_block() {  # <mode>
-  local mode=$1 delivery
+  local mode=$1 delivery verification
+  verification="Run the same gate commands on clean origin/main and on the branch and compare results. Prove every new behavioural test can fail by breaking it once, confirm the deletion fence is empty against the pushed HEAD with \`git diff --name-status origin/main...HEAD\`, and drive the visible surface locally."
   case "$mode" in
-    no-mistakes) delivery="only then start no-mistakes." ;;
-    direct-PR) delivery="only then push and open the PR." ;;
-    local-only) delivery="only then stop with a clean ready branch." ;;
+    no-mistakes)
+      delivery="only then start no-mistakes."
+      ;;
+    direct-PR)
+      delivery="only then push and open the PR."
+      ;;
+    local-only)
+      verification="Run the same gate commands on clean local \`main\` and on the branch and compare results. Prove every new behavioural test can fail by breaking it once, confirm the deletion fence is empty against the local HEAD with \`git diff --name-status main...HEAD\`, and drive the visible surface locally."
+      delivery="only then stop with a clean ready branch."
+      ;;
     *)
       echo "error: fm_ship_method_block: unknown delivery mode '$mode'" >&2
       return 1 ;;
@@ -205,7 +213,7 @@ fm_ship_method_block() {  # <mode>
 # Method
 1. REPRODUCE BEFORE TOUCHING CODE. Establish a failing test or capture wrong behaviour in-tree that names the defect before editing code. For a feature rather than a bug, use a failing test for the new behaviour; without reproduction, do not fix.
 2. SWEEP THE CLASS BEFORE THE FIRST EDIT. If the change adds, moves, or renames a fact, grep every site that defines, rebuilds, filters, or persists it before editing any of them, and record the count found. Fix all sites in the same change, then report how many were found, how many were fixed, and why each remaining site is correct as it stands.
-3. SELF-VERIFY BEFORE VALIDATION. Run the same gate commands on clean origin/main and on the branch and compare results. Prove every new behavioural test can fail by breaking it once, confirm the deletion fence is empty against the pushed HEAD with \`git diff --name-status origin/main...HEAD\`, and drive the visible surface locally; $delivery If validation finds something one of these steps would have caught, call it a workflow defect in the report.
+3. SELF-VERIFY BEFORE VALIDATION. $verification $delivery If validation finds something one of these steps would have caught, call it a workflow defect in the report.
 EOF
 }
 

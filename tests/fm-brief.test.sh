@@ -222,7 +222,7 @@ test_ship_modes_generate_clean_briefs() {
 }
 
 test_ship_method_section_is_ship_only() {
-  local home ship scout setup_line method_line rules_line
+  local home ship local_only scout setup_line method_line rules_line
   home="$TMP_ROOT/method-section-home"
   mkdir -p "$home/data"
 
@@ -246,6 +246,18 @@ test_ship_method_section_is_ship_only() {
     || fail "scout method fixture did not scaffold"
   scout="$home/data/method-scout/brief.md"
   assert_no_grep "# Method" "$scout" "scout brief received ship-only Method section"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" method-local-only some-proj --mode local-only >/dev/null 2>&1 \
+    || fail "local-only Method fixture did not scaffold"
+  local_only="$home/data/method-local-only/brief.md"
+  assert_grep "clean local \`main\`" "$local_only" \
+    "local-only Method section did not use the local default branch"
+  assert_grep 'git diff --name-status main...HEAD' "$local_only" \
+    "local-only Method section did not use the local deletion fence"
+  assert_no_grep "origin/main" "$local_only" \
+    "local-only Method section referenced an unavailable remote"
+  assert_no_grep "pushed HEAD" "$local_only" \
+    "local-only Method section required a push"
   pass "fm-brief.sh: ship Method section emits all three steps and scouts omit it"
 }
 
