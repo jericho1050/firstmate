@@ -451,10 +451,12 @@ test_project_instruction_reading_contract() {
     mode=${id_mode##*:}
     FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" >/dev/null 2>&1
     brief="$home/data/$id/brief.md"
-    assert_grep "**Before your first edit, read the project's own instructions in full and follow them.**" "$brief" \
-      "$mode brief must require reading project instructions before editing"
+    assert_grep "**After completing only the isolation preflight above, read the project's own instructions in full and follow them before your first project command or edit.**" "$brief" \
+      "$mode brief must require reading project instructions after isolation and before commands or edits"
     assert_grep "$instruction_files" "$brief" \
       "$mode brief must name and require all root instruction files"
+    assert_grep "The commands needed to read those instruction files are the only commands allowed between the isolation preflight and completing this read." "$brief" \
+      "$mode brief must forbid project commands between isolation and reading instructions"
     assert_grep "This applies to every task, including one-line fixes and comment-only changes; you are never too small a task to read them." "$brief" \
       "$mode brief must cover trivial tasks"
     assert_grep "append a status event describing the conflict rather than silently choosing one" "$brief" \

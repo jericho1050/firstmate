@@ -48,8 +48,9 @@
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
-# Every ship and scout scaffold requires the worker to read each repo-root
-# CLAUDE.md and AGENTS.md before editing; scouts must do so before any command.
+# Every ship scaffold requires the worker to read each repo-root CLAUDE.md and
+# AGENTS.md immediately after its isolation preflight, before any other command
+# or edit; scouts must do so before any command or edit.
 # Instruction conflicts go to the task status for ship work or the report for a
 # scout instead of being resolved silently.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
@@ -464,8 +465,9 @@ You are in a disposable git worktree of $REPO, at a detached HEAD on a clean def
 The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse --git-common-dir\` can help inspect the repo, but they do not prove you are outside the primary checkout.
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
-**Before your first edit, read the project's own instructions in full and follow them.**
+**After completing only the isolation preflight above, read the project's own instructions in full and follow them before your first project command or edit.**
 Look for \`CLAUDE.md\` and \`AGENTS.md\` at the repo root; read every one that exists.
+The commands needed to read those instruction files are the only commands allowed between the isolation preflight and completing this read.
 They carry conventions no diff will teach you - required tooling, logging and redaction rules, banned commands - and violating them is how work gets sent back in review.
 This applies to every task, including one-line fixes and comment-only changes; you are never too small a task to read them.
 If the project's instructions conflict with anything below, append a status event describing the conflict rather than silently choosing one.
