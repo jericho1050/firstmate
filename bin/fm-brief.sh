@@ -48,6 +48,10 @@
 # to launch a ship task whose explicit --mode disagrees, so an adjusted brief and the
 # recorded task metadata cannot drift apart.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
+# Every ship and scout scaffold requires the worker to read each repo-root
+# CLAUDE.md and AGENTS.md before editing; scouts must do so before any command.
+# Instruction conflicts go to the task status for ship work or the report for a
+# scout instead of being resolved silently.
 # --mode is refused on scout and secondmate scaffolds: a scout's deliverable is a
 # report rather than a merge, and a charter is not a delivery contract.
 # There is no --yolo flag here. The worker never owns merge decisions, so yolo is
