@@ -1,0 +1,59 @@
+SCENARIO: another task branch refuses teardown before mutation
+command: FM_HOME=<isolated-home> bin/fm-teardown.sh stale-task --force
+exit=1
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: task stale-task's recorded worktree <fixture>/worktree is checked out on branch fm/other-task for task other-task; refusing teardown to avoid changing another task's copy.
+Resolve task other-task and retry teardown after its work is safely landed; do not use --force to bypass this refusal.
+branch_after=fm/other-task
+metadata_preserved=yes
+sentinel_preserved=yes
+runtime_calls=none
+
+SCENARIO: own task branch and claim still tear down safely
+command: FM_HOME=<isolated-home> bin/fm-teardown.sh own-task --force
+exit=0
+teardown own-task complete (window firstmate:fm-own-task, worktree <fixture>/worktree)
+Backlog: own-task just finished (this home keeps no markdown backlog at <fixture>/home/data/backlog.md). Update <fixture>/home/data/backlog.md - move own-task to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+metadata_removed=yes
+claim_removed=yes
+runtime_calls:
+treehouse <return> <--force> <<fixture>/worktree>
+tmux <kill-window> <-t> <=firstmate:=fm-own-task>
+
+SCENARIO: reassigned slot skips slot mutation but finishes stale-record cleanup
+command: FM_HOME=<isolated-home> bin/fm-teardown.sh stale-task --force
+exit=0
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+warning: task stale-task's recorded worktree <fixture>/pool/1/project was reassigned to task new-owner (home <fixture>/other-home), which claimed that pool slot after this record was written; that slot is no longer stale-task's, so its processes, copy, and claim are left untouched and only stale-task's own cleanup runs.
+stale_metadata_removed=yes
+slot_sentinel_preserved=yes
+new_owner_claim_unchanged=yes
+treehouse_return_called=no
+
+SCENARIO: unreadable reachable task record refuses teardown before mutation
+command: FM_HOME=<isolated-home> bin/fm-teardown.sh stale-task --force
+exit=1
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  2 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/Users/echo/.no-mistakes/worktrees/a884983a9df2/01M2GMD4G34KABRAMVWM4H4DJE/bin/fm-wake-lib.sh: line 1350: <fixture>/home/state/hidden-task.meta: Permission denied
+REFUSED: cannot read local task record <fixture>/home/state/hidden-task.meta; refusing teardown because slot ownership is unproven.
+both_metadata_records_preserved=yes
+sentinel_preserved=yes
+runtime_calls=none

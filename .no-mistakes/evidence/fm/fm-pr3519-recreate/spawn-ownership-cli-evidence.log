@@ -1,0 +1,18 @@
+SCENARIO: retained reachable task record blocks fresh allocation
+command: FM_HOME=<isolated-home> bin/fm-spawn.sh evidence-new-task <project> --scout
+exit=1
+error: spawn refused: worktree '/private/var/folders/j3/dxjkmnxn11vc2r7dj5zdbk480000gn/T/fm-spawn-ownership-evidence.vmUpLy/retained-record/slots/1/project' is already held by task 'older-task'
+Resolve task 'older-task' and retry after its work is safely landed and its record is cleaned up; do not bypass this refusal.
+slot_head_unchanged=yes
+new_metadata_absent=yes
+slot_claim_absent=yes
+
+SCENARIO: well-formed foreign owner claim blocks overwrite
+command: FM_HOME=<isolated-home> bin/fm-spawn.sh shared-name <project> --scout
+exit=1
+error: could not claim Treehouse pool slot /private/var/folders/j3/dxjkmnxn11vc2r7dj5zdbk480000gn/T/fm-spawn-ownership-evidence.vmUpLy/foreign-claim/slots/1/project for task shared-name; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window firstmate:fm-shared-name
+claim_after:
+task=shared-name
+home=<foreign-home>
+claim_unchanged=yes
+new_metadata_absent=yes
