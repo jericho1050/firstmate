@@ -664,8 +664,7 @@ No Herdr-specific copy of that protocol exists.
 Stopping and restarting a named Herdr server preserves workspace, tab, pane, and label ids.
 The underlying harness processes and live agent registrations do not survive.
 A restored same-labeled tab with a missing pane or no registered agent is a husk.
-Herdr may instead resume the agent itself when it restores a pane (observed on 0.9.1 after a reboot - [verification](verification/supervision.md#wiring-liveness)).
-That agent is live, so it is not a husk, but `fm-spawn` did not launch it, so it carries none of the wiring that rides on the launch command; the busy contract classifies it `unknown wiring-lost` and the watcher reports it as unmonitored ([architecture](architecture.md)).
+If Herdr restores a pane by resuming a Pi agent, that agent is live rather than a husk, but lacks the launch-bound busy wiring `fm-spawn` armed and is reported as `unknown wiring-lost` ([supervision verification](verification/supervision.md#wiring-liveness), [architecture](architecture.md)).
 
 Create replaces only a confidently dead or no-agent husk, creates the replacement before closing the old tab, and refuses live or unknown states.
 This prevents closing the workspace's last tab before a replacement exists.

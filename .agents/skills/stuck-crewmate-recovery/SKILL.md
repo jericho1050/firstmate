@@ -72,7 +72,8 @@ Only positive socket refusal or absence is a daemon-down finding; escalate that 
 Escalate in order:
 
 1. Peek the pane, and check the task's steering inbox (`state/<id>.inbox/`) for unhandled `*.msg` records - a stale wake naming an unread firstmate instruction means the worker never acknowledged a durable steer, and the record itself shows exactly what was intended.
-   A stale wake reporting the worker as unmonitored means its agent was restarted outside Firstmate - a terminal manager restoring its panes after a restart or a reboot does this - so no busy state or finished turn of it is being reported and its record cannot say whether it is working.
+   A stale wake reporting the worker as unmonitored means the agent currently in the pane does not hold the wiring Firstmate armed; it may have been resumed by a terminal manager after a restart or reboot, or otherwise replaced outside Firstmate.
+   It has no trustworthy busy state or finished-turn reporting, so its record cannot say whether it is working.
    Read the pane to see what it is doing, and relaunch it as step 4 does once it is at a safe point, which is what restores supervision; until then never report it as idle or working from its record.
 2. If the crewmate is waiting on a question its brief already answers, answer in one line via `FM_HOME=<this-firstmate-home> bin/fm-send.sh` from an active firstmate session unless `FM_HOME` is already set to the active firstmate home.
 3. If the crewmate is confused or looping, interrupt with `FM_HOME=<this-firstmate-home> bin/fm-control.sh <task-id> interrupt`, then redirect with one corrective line through `fm-send`.
