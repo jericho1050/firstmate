@@ -5401,7 +5401,7 @@ unwired_case() {  # <name> <id>
 }
 
 # Record a wiring identity for <id> naming a real process, then end that process
-# when <fate> is `gone`. Echoes the pid.
+# when <fate> is `gone`. Stores its pid in UNWIRED_WRITER_PID.
 unwired_writer() {  # <state> <id> <gone|alive>
   local state=$1 id=$2 fate=$3 pid
   sleep 600 > /dev/null 2>&1 &
@@ -5410,9 +5410,9 @@ unwired_writer() {  # <state> <id> <gone|alive>
     || fail "could not record a wiring identity for $id"
   if [ "$fate" = gone ]; then
     kill "$pid" 2>/dev/null
-    wait "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null || [ "$?" -eq 143 ] || fail "could not reap the wiring writer for $id"
   fi
-  printf '%s' "$pid"
+  UNWIRED_WRITER_PID=$pid
 }
 
 unwired_watch() {  # <dir> <id> <out> <agent-command> [extra env assignments...]
@@ -5472,7 +5472,7 @@ test_unmonitored_live_worker_is_reported_once() {
 }
 
 test_unmonitored_report_follows_the_launch() {
-  local dir state out key pid ticker gen
+  local dir state out key pid ticker gen writer
   dir=$(unwired_case unwired-relaunch relaunched); state="$dir/state"; out="$dir/watch.out"
   key="test_fm-relaunched"
   unwired_writer "$state" relaunched gone > /dev/null
@@ -5496,18 +5496,24 @@ test_unmonitored_report_follows_the_launch() {
   printf '%s' "$(cat "$state/relaunched.busy-gen")" > "$state/.unwired-reported-$key"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" relaunched)
   "$ROOT/bin/fm-busy-event.sh" apply "$state" relaunched idle --gen "$gen" --source pi-ext --event agent-settled
-  pid=$(unwired_writer "$state" relaunched alive)
+  unwired_writer "$state" relaunched alive
+  writer=$UNWIRED_WRITER_PID
   : > "$out"
   unwired_watch "$dir" relaunched "$out" pi
-  if ! wait_poll_cycle "$state" "$!"; then
-    kill "$ticker" "$pid" 2>/dev/null; fail "a relaunched worker with live wiring was reported: $(cat "$out")"
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    kill "$ticker" "$writer" "$pid" 2>/dev/null || :
+    wait "$writer" 2>/dev/null || [ "$?" -eq 143 ] || :
+    reap "$pid"
+    fail "a relaunched worker with live wiring was reported: $(cat "$out")"
   fi
-  reap "$!"
+  reap "$pid"
   [ ! -e "$state/.unwired-reported-$key" ] || { kill "$ticker" "$pid" 2>/dev/null; fail "a relaunch with live wiring kept the old report"; }
   ack_stopped_cycle "$state" || { kill "$ticker" "$pid" 2>/dev/null; fail "could not acknowledge the relaunch stop"; }
 
   # The relaunched agent is replaced in its turn: that is a new loss, reported.
-  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  kill "$writer" 2>/dev/null || :
+  wait "$writer" 2>/dev/null || [ "$?" -eq 143 ] || fail "could not reap the relaunched wiring writer"
   : > "$out"
   unwired_watch "$dir" relaunched "$out" pi
   wait_for_exit "$!" 100 || { kill "$ticker" 2>/dev/null; reap "$!"; fail "a relaunched worker that lost its wiring again was not reported"; }
@@ -5524,15 +5530,20 @@ test_wired_worker_is_never_reported_unmonitored() {
   dir=$(unwired_case unwired-control wired); state="$dir/state"; out="$dir/watch.out"
   key="test_fm-wired"
   # Identical to the reported case but for one fact: the writer is still alive.
-  writer=$(unwired_writer "$state" wired alive)
+  unwired_writer "$state" wired alive
+  writer=$UNWIRED_WRITER_PID
   ticker=$(tick_pane "$dir/pane.txt")
   unwired_watch "$dir" wired "$out" pi
   pid=$!
   if ! wait_poll_cycle "$state" "$pid"; then
-    kill "$ticker" "$writer" 2>/dev/null; reap "$pid"; fail "a worker with live wiring was reported: $(cat "$out")"
+    kill "$ticker" "$writer" "$pid" 2>/dev/null || :
+    wait "$writer" 2>/dev/null || [ "$?" -eq 143 ] || :
+    reap "$pid"
+    fail "a worker with live wiring was reported: $(cat "$out")"
   fi
   reap "$pid"
-  kill "$ticker" "$writer" 2>/dev/null
+  kill "$ticker" "$writer" 2>/dev/null || :
+  wait "$writer" 2>/dev/null || [ "$?" -eq 143 ] || fail "could not reap the wired worker's writer"
   [ ! -s "$out" ] || fail "a worker with live wiring printed a wake reason: $(cat "$out")"
   [ ! -e "$state/.unwired-reported-$key" ] && [ ! -e "$state/.unwired-probed-$key" ] \
     || fail "a worker with live wiring left an unmonitored marker"

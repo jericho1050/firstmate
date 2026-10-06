@@ -389,7 +389,7 @@ fm_busy_wiring_rides_launch() {  # <harness>
 # fm_busy_wiring_lost: 0 when the task's armed wiring provably has no live
 # writer (the two proofs above); 1 when it has one or nothing is proven.
 fm_busy_wiring_lost() {  # <state-dir> <id> <harness>
-  local state=$1 id=$2 harness=${3:-} gen wired line rest w_gen w_pid w_start now_start minted boot
+  local state=$1 id=$2 harness=${3:-} gen wired line rest w_gen w_pid w_start w_state now_start minted boot
   gen=$(fm_busy_current_gen "$state" "$id") || return 1
   wired="$state/$id.busy-wired"
   line=
@@ -406,6 +406,8 @@ fm_busy_wiring_lost() {  # <state-dir> <id> <harness>
     case "${w_pid:-}" in ''|*[!0-9]*) w_gen= ;; esac
     if [ -n "$w_gen" ]; then
       kill -0 "$w_pid" 2>/dev/null || return 0
+      w_state=$(ps -o stat= -p "$w_pid" 2>/dev/null) || w_state=
+      case "$w_state" in *Z*) return 0 ;; esac
       now_start=$(fm_busy_process_start "$w_pid") || now_start=
       [ -z "$now_start" ] || [ "$now_start" = "$w_start" ] || return 0
       return 1
