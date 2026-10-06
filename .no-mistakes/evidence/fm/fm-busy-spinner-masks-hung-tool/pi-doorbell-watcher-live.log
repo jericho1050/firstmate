@@ -1,0 +1,56 @@
+WATCHER_STARTED: live beacon present before task registration
+SEND_EXIT=0
+FM_SEND_OUTPUT
+bash-5.3$ ./bin/fm-send.sh 'live-pi-doorbell' Doorbell; echo $? > "$LAB/send-result"
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/0c/h8vrkyxd6mx9tqfxcxnr_k040000gn/T/fm-lab.exzgNM
+bash-5.3$
+END_FM_SEND_OUTPUT
+WAKE_QUEUE
+1791311010	1	stale	primary:pi	stale: primary:pi (unread firstmate instruction: /var/folders/0c/h8vrkyxd6mx9tqfxcxnr_k040000gn/T/fm-lab.exzgNM/state/live-pi-doorbell.inbox/001.msg still unhandled after 3 doorbell delivery attempts with an idle pane; inspect the worker)
+END_WAKE_QUEUE
+WATCHER_LOG
+stale: primary:pi (unread firstmate instruction: /var/folders/0c/h8vrkyxd6mx9tqfxcxnr_k040000gn/T/fm-lab.exzgNM/state/live-pi-doorbell.inbox/001.msg still unhandled after 3 doorbell delivery attempts with an idle pane; inspect the worker)
+END_WATCHER_LOG
+FINAL_PI_PANE
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+
+ Warning: fd not found. Offline mode enabled, skipping download.
+
+ Warning: No models available. Use /login to log into a provider via OAuth or API key. See:
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/models.md
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf and restart tmux.
+
+ Error: No API key found for the selected model.
+
+ Use /login to log into a provider via OAuth or API key. See:
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/models.md
+
+ Error: No API key found for the selected model.
+
+ Use /login to log into a provider via OAuth or API key. See:
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/models.md
+
+ Error: No API key found for the selected model.
+
+ Use /login to log into a provider via OAuth or API key. See:
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/models.md
+
+ Error: No API key found for the selected model.
+
+ Use /login to log into a provider via OAuth or API key. See:
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md
+   /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/models.md
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/Users/jerichowenzelserrano/.no-mistakes/worktrees/d335fa506761/01M48W96DH5H76SFC0BJ12PQDD (detached)
+0.0%/0 (auto)                                                                                                                                            unknown
+END_FINAL_PI_PANE
+PASS: real fm-send rang live Pi, and the real watcher escalated the unhandled doorbell after bounded retries.

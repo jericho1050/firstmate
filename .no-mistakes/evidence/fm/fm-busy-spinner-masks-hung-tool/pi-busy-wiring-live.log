@@ -1,0 +1,3 @@
+ok - Pi 0.99.1 records the process its Firstmate extension loaded into, with no turn submitted
+ok - Pi 0.99.1: the wiring reads as live while the agent that loaded it is running
+ok - Pi 0.99.1: once the agent holding the wiring is gone its record classifies unknown wiring-lost

@@ -1,0 +1,28 @@
+# claude pane tail at failure:
+#    Accessing workspace:
+#    /Users/jerichowenzelserrano/.no-mistakes/worktrees/d335fa506761/01M48W96DH5H76SFC0BJ12PQDD
+#    Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not, take a moment to review what's in this folder first.
+#    Claude Code'll be able to read, edit, and execute files here.
+#    Security guide
+#    ❯ No, exit
+#      Yes, I trust this folder
+#    Enter to confirm · Esc to cancel
+not ok - claude (2.1.291 (Claude Code)): idle composer never classified empty (last verdict: pending)
+# codex pane tail at failure:
+#     Hooks need review
+#     4 hooks are new or changed.
+#     Hooks can run outside the sandbox after you trust them.
+#   › 1. Review hooks
+#     2. Trust all and continue
+#     3. Continue without trusting (hooks won't run)
+#     enter confirm · esc skip
+not ok - codex (codex-cli 0.156.1): idle composer never classified empty (last verdict: unknown)
+# harness absent, not verified here: opencode
+ok - pi (0.99.1): real idle composer classifies empty
+ok - pi (0.99.1): the same idle pane read cursorless is not pending (verdict: empty)
+# harness absent, not verified here: grok
+# harness absent, not verified here: kimi
+# harness absent, not verified here: muse
+ok - strict posture live: a blank shell row classifies unknown and injection defers
+# harness absent, not verified here: zellij (false-positive regression not exercised)
+not ok - live composer-matrix guard observed failures above
